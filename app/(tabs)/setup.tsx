@@ -108,20 +108,6 @@ export default function SetupPage() {
               <Text style={styles.deviceInfoLabel}>Device Number:</Text>
               <Text style={styles.deviceInfoValue}>{unitNumber || 'Not configured'}</Text>
             </View>
-            
-            <View style={styles.progressContainer}>
-              <Text style={styles.progressText}>
-                {completedSteps.length} of {setupSteps.length} steps completed
-              </Text>
-              <View style={styles.progressBar}>
-                <View 
-                  style={[
-                    styles.progressFill, 
-                    {width: `${(completedSteps.length / setupSteps.length) * 100}%`}
-                  ]} 
-                />
-              </View>
-            </View>
           </View>
         </Card>
         
@@ -131,18 +117,13 @@ export default function SetupPage() {
             onPress={() => navigateToStep(step)}
             style={styles.stepContainer}
           >
-            <Card 
-              style={[
-                styles.stepCard,
-                completedSteps.includes(step.id) && styles.completedStep
-              ]}
-            >
+            <Card style={styles.stepCard}>
               <View style={styles.stepContent}>
                 <View style={styles.stepIconContainer}>
                   <Ionicons 
                     name={step.icon as any}
                     size={24} 
-                    color={completedSteps.includes(step.id) ? colors.success : colors.primary}
+                    color={colors.primary}
                   />
                 </View>
                 
@@ -152,31 +133,12 @@ export default function SetupPage() {
                 </View>
                 
                 <View style={styles.stepIndicator}>
-                  {completedSteps.includes(step.id) ? (
-                    <Ionicons name="checkmark-circle" size={24} color={colors.success} />
-                  ) : (
-                    <Ionicons name="chevron-forward" size={24} color={colors.text.secondary} />
-                  )}
+                  <Ionicons name="chevron-forward" size={24} color={colors.text.secondary} />
                 </View>
               </View>
             </Card>
           </TouchableOpacity>
         ))}
-        
-        <Card title="Need Help?" style={styles.helpCard}>
-          <Text style={styles.helpText}>
-            If you're having trouble with the setup process, check our documentation
-            or contact support for assistance.
-          </Text>
-          
-          <TouchableOpacity 
-            style={styles.supportButton}
-            onPress={() => {/* Would navigate to support page */}}
-          >
-            <Ionicons name="help-circle-outline" size={20} color={colors.primary} />
-            <Text style={styles.supportButtonText}>View Support Guide</Text>
-          </TouchableOpacity>
-        </Card>
       </ScrollView>
     </View>
   );
@@ -214,34 +176,11 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
     flex: 1,
   },
-  progressContainer: {
-    marginTop: spacing.xs,
-  },
-  progressText: {
-    fontSize: 14,
-    color: colors.text.secondary,
-    marginBottom: spacing.xs,
-  },
-  progressBar: {
-    height: 6,
-    backgroundColor: colors.surfaceVariant,
-    borderRadius: borderRadius.pill,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: colors.primary,
-    borderRadius: borderRadius.pill,
-  },
   stepContainer: {
     marginBottom: spacing.sm,
   },
   stepCard: {
     padding: spacing.sm,
-  },
-  completedStep: {
-    borderLeftWidth: 4,
-    borderLeftColor: colors.success,
   },
   stepContent: {
     flexDirection: 'row',
@@ -271,24 +210,5 @@ const styles = StyleSheet.create({
   },
   stepIndicator: {
     marginLeft: spacing.sm,
-  },
-  helpCard: {
-    marginTop: spacing.md,
-  },
-  helpText: {
-    fontSize: 14,
-    color: colors.text.secondary,
-    lineHeight: 20,
-    marginBottom: spacing.md,
-  },
-  supportButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-  },
-  supportButtonText: {
-    fontSize: 16,
-    color: colors.primary,
-    marginLeft: spacing.xs,
   },
 });

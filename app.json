@@ -15,7 +15,8 @@
         "NSCameraUsageDescription": "This app needs camera access to scan QR codes",
         "NSPhotoLibraryUsageDescription": "This app needs photo library access to get QR codes from images",
         "NSPhotoLibraryAddUsageDescription": "This app needs photo library access to save QR codes",
-        "NSLocationWhenInUseUsageDescription": "This app needs location access for finding nearby devices"
+        "NSLocationWhenInUseUsageDescription": "This app needs location access for finding nearby devices",
+        "NSContactsUsageDescription": "This app needs access to your contacts to allow you to select phone numbers for authorization."
       }
     },
     "android": {
@@ -23,7 +24,8 @@
       "permissions": [
         "SEND_SMS",
         "READ_SMS",
-        "RECEIVE_SMS"
+        "RECEIVE_SMS",
+        "android.permission.READ_CONTACTS"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",

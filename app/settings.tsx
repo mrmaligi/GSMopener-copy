@@ -56,34 +56,6 @@ export default function SettingsPage() {
           { /* Removed unwanted command texts */ }
         </View>
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Device Settings</Text>
-         
-          <Text style={styles.inputLabel}>Unit Telephone Number</Text>
-          <TextInput
-            style={styles.input}
-            value={unitNumber}
-            onChangeText={setUnitNumber}
-            placeholder="Enter GSM relay number"
-            keyboardType="phone-pad"
-          />
-         
-          <Text style={styles.inputLabel}>Current Password</Text>
-          <TextInput
-            style={styles.input}
-            value={password}
-            onChangeText={(text) => {
-              // Only allow 4 digits
-              const filtered = text.replace(/[^0-9]/g, '').slice(0, 4);
-              setPassword(filtered);
-            }}
-            placeholder="4-digit password"
-            keyboardType="number-pad"
-            maxLength={4}
-          />
-        </View>
-
-
         <TouchableOpacity
           style={styles.saveButton}
           onPress={saveToLocalStorage}

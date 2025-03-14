@@ -8,6 +8,7 @@ import { TextInputField } from '../components/TextInputField';
 import { Button } from '../components/Button';
 import { spacing, shadows, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { addLog } from '../utils/logger';
 
 export default function SettingsPage() {
   const [unitNumber, setUnitNumber] = useState('');
@@ -36,7 +37,7 @@ export default function SettingsPage() {
     }
   };
 
-  const saveToLocalStorage = async () => {
+  const saveSettings = async () => {
     if (!unitNumber) {
       Alert.alert('Error', 'Please enter the GSM relay number');
       return;
@@ -53,10 +54,18 @@ export default function SettingsPage() {
       await AsyncStorage.setItem('unitNumber', unitNumber);
       await AsyncStorage.setItem('password', password);
       await AsyncStorage.setItem('notificationsEnabled', notificationsEnabled.toString());
+      
+      // Log settings update
+      await addLog(
+        'Settings Update', 
+        `GSM number: ${unitNumber}, Notifications: ${notificationsEnabled ? 'On' : 'Off'}`,
+        true
+      );
 
       Alert.alert('Success', 'Settings saved successfully');
     } catch (error) {
       console.error('Failed to save settings:', error);
+      await addLog('Settings Update', `Error: ${error.message}`, false);
       Alert.alert('Error', 'Failed to save settings. Please try again.');
     } finally {
       setIsSaving(false);
@@ -119,7 +128,7 @@ export default function SettingsPage() {
 
           <Button
             title="Save Settings"
-            onPress={saveToLocalStorage}
+            onPress={saveSettings}
             loading={isSaving}
             fullWidth
             style={styles.saveButton}

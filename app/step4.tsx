@@ -8,6 +8,7 @@ import { Card } from './components/Card';
 import { Button } from './components/Button';
 import { TextInputField } from './components/TextInputField';
 import { colors, spacing, shadows, borderRadius } from './styles/theme';
+import { addLog } from './utils/logger';
 
 export default function Step4Page() {
   const router = useRouter();
@@ -62,40 +63,34 @@ export default function Step4Page() {
   const sendSMS = async (command: string) => {
     if (!unitNumber) {
       Alert.alert('Error', 'GSM relay number not set. Please configure in Step 1 first.');
+      await addLog('Relay Settings', 'Failed: GSM relay number not set', false);
       return;
     }
     
     setIsLoading(true);
-
+    
     try {
-      const formattedUnitNumber = Platform.OS === 'ios' ? unitNumber.replace('+', '') : unitNumber;
-
       const smsUrl = Platform.select({
-        ios: `sms:${formattedUnitNumber}&body=${encodeURIComponent(command)}`,
-        android: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
-        default: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
+        ios: `sms:${unitNumber.replace('+', '')}&body=${encodeURIComponent(command)}`,
+        android: `sms:${unitNumber}?body=${encodeURIComponent(command)}`,
+        default: `sms:${unitNumber}?body=${encodeURIComponent(command)}`
       });
-
-      const supported = await Linking.canOpenURL(smsUrl);
       
-      if (!supported) {
-        Alert.alert(
-          'Error',
-          'SMS is not available on this device. Please ensure an SMS app is installed.',
-          [{ text: 'OK' }]
-        );
-        return;
-      }
-
       await Linking.openURL(smsUrl);
+      
+      // Log the action - mask the password part of the command
+      const logCommand = command.replace(password, '****');
+      await addLog(
+        'Relay Settings', 
+        `Command sent: ${logCommand}`, 
+        true
+      );
+      
+      setIsLoading(false);
     } catch (error) {
       console.error('Failed to send SMS:', error);
-      Alert.alert(
-        'Error',
-        'Failed to open SMS. Please try again.',
-        [{ text: 'OK' }]
-      );
-    } finally {
+      await addLog('Relay Settings', `Error: ${error.message}`, false);
+      Alert.alert('Error', `Failed to send SMS: ${error.message}`);
       setIsLoading(false);
     }
   };

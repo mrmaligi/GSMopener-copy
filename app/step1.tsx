@@ -13,6 +13,7 @@ export default function Step1Page() {
   const router = useRouter();
   const [unitNumber, setUnitNumber] = useState('');
   const [password, setPassword] = useState('1234'); // Default password
+  const [adminNumber, setAdminNumber] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   
   useEffect(() => {
@@ -23,9 +24,11 @@ export default function Step1Page() {
     try {
       const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
       const savedPassword = await AsyncStorage.getItem('password');
+      const savedAdminNumber = await AsyncStorage.getItem('adminNumber');
 
       if (savedUnitNumber) setUnitNumber(savedUnitNumber);
       if (savedPassword) setPassword(savedPassword);
+      if (savedAdminNumber) setAdminNumber(savedAdminNumber);
     } catch (error) {
       console.error('Error loading data:', error);
     }
@@ -35,6 +38,7 @@ export default function Step1Page() {
     try {
       await AsyncStorage.setItem('unitNumber', unitNumber);
       await AsyncStorage.setItem('password', password);
+      await AsyncStorage.setItem('adminNumber', adminNumber);
       
       // Mark step as completed
       const savedCompletedSteps = await AsyncStorage.getItem('completedSteps');
@@ -97,7 +101,43 @@ export default function Step1Page() {
     }
   };
 
+  const registerAdminNumber = () => {
+    if (!unitNumber) {
+      Alert.alert('Error', 'Please enter the GSM relay number first');
+      return;
+    }
+    
+    if (!adminNumber) {
+      Alert.alert('Error', 'Please enter your admin phone number');
+      return;
+    }
+    
+    // Format the admin number to remove any non-digit characters
+    let formattedAdminNumber = adminNumber.replace(/\D/g, '');
+    
+    // Make sure the number has the correct format with "00" prefix before country code
+    if (formattedAdminNumber.startsWith('0')) {
+      formattedAdminNumber = formattedAdminNumber.substring(1); // Remove leading 0 if exists
+    }
+    
+    // Add "00" prefix if it's not already there
+    if (!formattedAdminNumber.startsWith('00')) {
+      formattedAdminNumber = '00' + formattedAdminNumber;
+    }
+    
+    // Send the TEL command to register admin
+    sendSMS(`${password}TEL${formattedAdminNumber}#`);
+    
+    // Save settings locally
+    saveToLocalStorage();
+  };
+
   const testConnection = () => {
+    if (!unitNumber) {
+      Alert.alert('Error', 'Please enter the GSM relay number first');
+      return;
+    }
+    
     sendSMS(`${password}EE`);
   };
 
@@ -139,70 +179,83 @@ export default function Step1Page() {
             containerStyle={styles.inputContainer}
           />
           
-          <View style={styles.buttonsContainer}>
+          <View style={styles.divider} />
+          
+          <View style={styles.adminRegistrationContainer}>
+            <Text style={styles.sectionTitle}>Register Admin Number</Text>
+            
+            <View style={styles.infoContainer}>
+              <Ionicons name="alert-circle-outline" size={24} color={colors.warning} style={styles.infoIcon} />
+              <Text style={styles.infoText}>
+                Important: Register your phone as an administrator to control the relay.
+                Number format example: 61469xxxxxx 
+              </Text>
+            </View>
+            
+            <TextInputField
+              label="Your Admin Phone Number"
+              value={adminNumber}
+              onChangeText={setAdminNumber}
+              placeholder="Enter your number (e.g., 0061469xxxxxx)"
+              keyboardType="phone-pad"
+              containerStyle={styles.inputContainer}
+              info="Number must start with 00 followed by country code"
+            />
+            
+            <Text style={styles.commandPreview}>
+              Command: {password}TEL{adminNumber.replace(/\D/g, '').startsWith('00') ? 
+                adminNumber.replace(/\D/g, '') : 
+                '00' + adminNumber.replace(/\D/g, '')}#
+            </Text>
+            
+            <Button
+              title="Register Admin Number"
+              onPress={registerAdminNumber}
+              loading={isLoading}
+              disabled={!adminNumber || !unitNumber}
+              icon={<Ionicons name="key-outline" size={20} color="white" />}
+              style={styles.registerButton}
+              fullWidth
+            />
+          </View>
+          
+          <View style={styles.divider} />
+          
+          <View style={styles.actionContainer}>
             <Button
               title="Test Connection"
-              variant="outline"
+              variant="secondary"
               onPress={testConnection}
               loading={isLoading}
-              icon={<Ionicons name="flash-outline" size={20} color={colors.primary} />}
-              style={styles.button}
+              disabled={!unitNumber}
+              icon={<Ionicons name="pulse-outline" size={20} color={colors.primary} />}
+              style={styles.actionButton}
             />
             
             <Button
               title="Save Settings"
               onPress={saveToLocalStorage}
-              disabled={!unitNumber || password.length !== 4}
-              style={styles.button}
+              loading={isLoading}
+              disabled={!unitNumber}
+              icon={<Ionicons name="save-outline" size={20} color="white" />}
+              style={styles.actionButton}
             />
           </View>
         </Card>
         
-        <Card title="Setup Instructions">
-          <View style={styles.stepList}>
-            <View style={styles.step}>
-              <View style={styles.stepNumber}>
-                <Text style={styles.stepNumberText}>1</Text>
-              </View>
-              <View style={styles.stepContent}>
-                <Text style={styles.stepText}>
-                  Enter the phone number of your GSM relay device with country code
-                </Text>
-              </View>
-            </View>
-            
-            <View style={styles.step}>
-              <View style={styles.stepNumber}>
-                <Text style={styles.stepNumberText}>2</Text>
-              </View>
-              <View style={styles.stepContent}>
-                <Text style={styles.stepText}>
-                  Enter your device password (default is usually 1234)
-                </Text>
-              </View>
-            </View>
-            
-            <View style={styles.step}>
-              <View style={styles.stepNumber}>
-                <Text style={styles.stepNumberText}>3</Text>
-              </View>
-              <View style={styles.stepContent}>
-                <Text style={styles.stepText}>
-                  Test the connection to verify your device responds
-                </Text>
-              </View>
-            </View>
-            
-            <View style={styles.step}>
-              <View style={styles.stepNumber}>
-                <Text style={styles.stepNumberText}>4</Text>
-              </View>
-              <View style={styles.stepContent}>
-                <Text style={styles.stepText}>
-                  Save settings and continue to the next setup step
-                </Text>
-              </View>
-            </View>
+        <Card title="How It Works" style={styles.helpCard}>
+          <View style={styles.helpItem}>
+            <Ionicons name="phone-portrait-outline" size={24} color={colors.primary} style={styles.helpIcon} />
+            <Text style={styles.helpText}>
+              The app communicates with your GSM relay device via SMS commands.
+            </Text>
+          </View>
+          
+          <View style={styles.helpItem}>
+            <Ionicons name="shield-outline" size={24} color={colors.primary} style={styles.helpIcon} />
+            <Text style={styles.helpText}>
+              Register your number as an administrator to maintain full control over the device.
+            </Text>
           </View>
         </Card>
       </ScrollView>
@@ -281,5 +334,57 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.text.secondary,
     lineHeight: 20,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: spacing.lg,
+  },
+  adminRegistrationContainer: {
+    marginBottom: spacing.md,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text.primary,
+    marginBottom: spacing.sm,
+  },
+  registerButton: {
+    marginTop: spacing.md,
+  },
+  actionContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  actionButton: {
+    flex: 1,
+    marginHorizontal: spacing.xs,
+  },
+  helpCard: {
+    marginTop: spacing.lg,
+  },
+  helpItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: spacing.md,
+  },
+  helpIcon: {
+    marginRight: spacing.md,
+    marginTop: 2,
+  },
+  helpText: {
+    flex: 1,
+    fontSize: 14,
+    color: colors.text.secondary,
+    lineHeight: 20,
+  },
+  commandPreview: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    backgroundColor: '#f0f0f0',
+    padding: spacing.sm,
+    borderRadius: borderRadius.sm,
+    marginTop: spacing.xs,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
 });

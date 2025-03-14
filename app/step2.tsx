@@ -8,6 +8,7 @@ import { TextInputField } from './components/TextInputField';
 import { Button } from './components/Button';
 import { Card } from './components/Card';
 import { colors, spacing, shadows, borderRadius } from './styles/theme';
+import { addLog } from './utils/logger';
 
 const Header = ({ title, showBack = false, backTo = '' }) => {
   const router = useRouter();
@@ -100,6 +101,7 @@ export default function Step2Page() {
   const sendSMS = async (command) => {
     if (!unitNumber) {
       Alert.alert('Error', 'GSM relay number not set. Please configure in Settings first.');
+      await addLog('Password Change', 'Failed: GSM relay number not set', false);
       return false;
     }
 
@@ -127,15 +129,19 @@ export default function Step2Page() {
       }
 
       await Linking.openURL(smsUrl);
+      
+      // Log the action
+      await addLog(
+        'Change Password', 
+        `Command sent: ${command.replace(/\w/g, '*')}`, 
+        true
+      );
+      
       setIsLoading(false);
       return true;
     } catch (error) {
       console.error('Failed to send SMS:', error);
-      Alert.alert(
-        'Error',
-        'Failed to open SMS. Please try again.',
-        [{ text: 'OK' }]
-      );
+      await addLog('Change Password', `Error: ${error.message}`, false);
       setIsLoading(false);
       return false;
     }

@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Linkin
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Header from './components/Header';
+import { addLog } from './utils/logger';
 
 export default function AuthorizedUsersPage() {
   const router = useRouter();
@@ -45,7 +46,7 @@ export default function AuthorizedUsersPage() {
   };
 
   // SMS Commands
-  const sendSMS = (command) => {
+  const sendSMS = async (command) => {
     const smsUrl = Platform.select({
       ios: `sms:${unitNumber}`, // Removed prefilled body on iOS
       android: `sms:${unitNumber}?body=${encodeURIComponent(command)}`,
@@ -56,11 +57,25 @@ export default function AuthorizedUsersPage() {
       .then(supported => {
         if (!supported) {
           alert('SMS is not available on this device');
+          addLog('Authorized Users', 'Error: SMS is not available on this device', false);
           return;
         }
+        
         return Linking.openURL(smsUrl);
       })
-      .catch(err => console.error('An error occurred', err));
+      .then(() => {
+        // Log successful SMS opening
+        addLog(
+          'Authorized Users', 
+          `Command sent: ${command.replace(password, '****')}`, 
+          true
+        );
+      })
+      .catch(err => {
+        console.error('Error opening SMS:', err);
+        addLog('Authorized Users', `Error: ${err.message}`, false);
+        alert('An error occurred when trying to open SMS app');
+      });
   };
 
   // Manage Authorized Users
