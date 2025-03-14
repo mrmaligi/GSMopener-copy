@@ -1,49 +1,83 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ArrowLeft } from 'lucide-react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { StatusBar } from 'expo-status-bar';
+import { colors, shadows, spacing } from '../styles/theme';
 
 interface HeaderProps {
   title: string;
   showBack?: boolean;
   backTo?: string;
+  rightAction?: React.ReactNode;
 }
 
-export default function Header({ title, showBack = false, backTo = '/setup' }: HeaderProps) {
+export const Header: React.FC<HeaderProps> = ({
+  title,
+  showBack = false,
+  backTo = '',
+  rightAction,
+}) => {
   const router = useRouter();
-  
+
+  const handleBack = () => {
+    if (backTo) {
+      router.push(backTo);
+    } else {
+      router.back();
+    }
+  };
+
   return (
-    <View style={styles.header}>
-      {showBack && (
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => router.push(backTo)}
-        >
-          <ArrowLeft color="white" size={24} />
+    <View style={styles.container}>
+      <StatusBar style="dark" />
+      {showBack ? (
+        <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+          <Ionicons name="arrow-back" size={24} color={colors.text.primary} />
         </TouchableOpacity>
+      ) : (
+        <View style={styles.placeholder} />
       )}
-      <Text style={styles.title}>{title}</Text>
+      
+      <Text style={styles.title} numberOfLines={1}>{title}</Text>
+      
+      {rightAction ? (
+        <View style={styles.rightAction}>{rightAction}</View>
+      ) : (
+        <View style={styles.placeholder} />
+      )}
     </View>
   );
-}
+};
 
 const styles = StyleSheet.create({
-  header: {
+  container: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 16,
+    justifyContent: 'space-between',
+    backgroundColor: colors.surface,
+    paddingTop: 50, // For iOS status bar
+    paddingBottom: 12,
     paddingHorizontal: 16,
-    paddingTop: 50,
-    backgroundColor: '#003399',
+    ...shadows.sm,
   },
   backButton: {
-    marginRight: 16,
+    padding: 8,
+    marginRight: 8,
+    borderRadius: 20,
   },
   title: {
-    color: 'white',
-    fontSize: 22,
-    fontWeight: '400',
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text.primary,
     flex: 1,
     textAlign: 'center',
+  },
+  placeholder: {
+    width: 40, // To balance the header and center the title
+  },
+  rightAction: {
+    width: 40,
+    alignItems: 'flex-end',
   },
 });

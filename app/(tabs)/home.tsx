@@ -1,150 +1,164 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Linking, Platform, PermissionsAndroid } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { StyleSheet, View, Text, ScrollView, Platform, Linking, TouchableOpacity, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { MessageSquare } from 'lucide-react-native';
-import { Gate } from '../components/CustomIcons';
-import Header from '../components/Header';
-import DeviceInfo from '../components/DeviceInfo';
+import { StatusBar } from 'expo-status-bar';
+import { Ionicons } from '@expo/vector-icons';
+import { Card } from '../components/Card';
+import { Button } from '../components/Button';
+import { colors, spacing, shadows } from '../styles/theme';
 
 export default function HomePage() {
-  const router = useRouter();
   const [unitNumber, setUnitNumber] = useState('');
-  const [password, setPassword] = useState('1234');
-  const [relaySettings, setRelaySettings] = useState({
-    accessControl: 'AUT',
-    latchTime: '000',
-  });
+  const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [lastAction, setLastAction] = useState<{ action: string; timestamp: Date } | null>(null);
 
   useEffect(() => {
-    if (Platform.OS === 'android') {
-      requestAndroidPermissions();
-    }
-    loadData();
+    loadSettings();
   }, []);
 
-  const requestAndroidPermissions = async () => {
+  const loadSettings = async () => {
     try {
-      const permissions = [
-        PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
-        PermissionsAndroid.PERMISSIONS.READ_SMS,
-        PermissionsAndroid.PERMISSIONS.RECEIVE_SMS,
-        PermissionsAndroid.PERMISSIONS.SEND_SMS,
-        PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE,
-      ];
-      const result = await PermissionsAndroid.requestMultiple(permissions);
-      console.log('Permission results:', result);
-      // Optionally, you could check if any permission is denied and handle accordingly.
-    } catch (err) {
-      console.warn('Permission request error:', err);
-    }
-  };
+      const storedUnitNumber = await AsyncStorage.getItem('unitNumber');
+      const storedPassword = await AsyncStorage.getItem('password');
 
-  const loadData = async () => {
-    try {
-      const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
-      console.log('Loaded unitNumber:', savedUnitNumber); // Add this line
-      if (savedUnitNumber) setUnitNumber(savedUnitNumber);
-      else console.warn('No unitNumber found in AsyncStorage');
-      const savedPassword = await AsyncStorage.getItem('password');
-      const savedRelaySettings = await AsyncStorage.getItem('relaySettings');
-
-      if (savedPassword) setPassword(savedPassword);
-      if (savedRelaySettings) setRelaySettings(JSON.parse(savedRelaySettings));
+      if (storedUnitNumber) setUnitNumber(storedUnitNumber);
+      if (storedPassword) setPassword(storedPassword);
     } catch (error) {
-      console.error('Error loading data:', error);
+      console.error('Failed to load settings:', error);
     }
   };
 
-  useFocusEffect(
-    React.useCallback(() => {
-      loadData();
-    }, [])
-  );
-
-  // SMS Commands
-  const sendSMS = (command) => {
-    if (!unitNumber) {
-      alert('Please set a valid unit number in Settings.');
+  const sendSMS = async (command: string) => {
+    if (!unitNumber || !password) {
+      Alert.alert(
+        'Missing Information',
+        'Please set up your device number and password in settings first.',
+        [{ text: 'OK' }]
+      );
       return;
     }
 
-    // For iOS, remove '+' if present.
-    const formattedUnitNumber = Platform.OS === 'ios' ? unitNumber.replace('+', '') : unitNumber;
+    setIsLoading(true);
 
-    const smsUrl = Platform.select({
-      ios: `sms:${formattedUnitNumber}&body=${encodeURIComponent(command)}`,
-      android: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
-      default: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
-    });
-    console.log('SMS URL:', smsUrl);
+    try {
+      const formattedUnitNumber = Platform.OS === 'ios' ? unitNumber.replace('+', '') : unitNumber;
 
-    Linking.canOpenURL(smsUrl)
-      .then((supported) => {
-        if (!supported) {
-          alert('SMS is not available on this device. Please ensure an SMS app is installed.');
-          return;
-        }
-        return Linking.openURL(smsUrl);
-      })
-      .catch((err) => {
-        console.error('An error occurred while opening SMS:', err);
-        alert('Failed to open SMS. Check the console for details.');
+      const smsUrl = Platform.select({
+        ios: `sms:${formattedUnitNumber}&body=${encodeURIComponent(command)}`,
+        android: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
+        default: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
       });
+
+      const supported = await Linking.canOpenURL(smsUrl);
+      
+      if (!supported) {
+        Alert.alert(
+          'Error',
+          'SMS is not available on this device. Please ensure an SMS app is installed.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
+      await Linking.openURL(smsUrl);
+      
+      // Record last action
+      setLastAction({
+        action: getActionName(command),
+        timestamp: new Date(),
+      });
+    } catch (error) {
+      console.error('Failed to send SMS:', error);
+      Alert.alert(
+        'Error',
+        'Failed to open SMS. Please try again.',
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  // Control Relay
+  const getActionName = (command: string) => {
+    if (command.includes('CC')) return 'Turn On Relay';
+    if (command.includes('P')) return 'Change Password';
+    if (command.includes('DD')) return 'Turn Off Relay';
+    if (command.includes('EE')) return 'Check Status';
+    return 'Command';
+  };
+
   const turnRelayOn = () => sendSMS(`${password}CC`);
   const turnRelayOff = () => sendSMS(`${password}DD`);
+  const checkStatus = () => sendSMS(`${password}EE`);
 
   return (
     <View style={styles.container}>
-      <Header title="Connect4v" />
-      <DeviceInfo unitNumber={unitNumber} />
-      
-      <View style={styles.content}>
-        <View style={styles.card}>
-          <TouchableOpacity style={styles.button} onPress={turnRelayOn}>
-            <View style={styles.buttonContent}>
-              <Gate size={48} color="#00bfff" />
-              <Text style={styles.buttonText}>Open Gate (ON)</Text>
-            </View>
-            <MessageSquare size={24} color="#00bfff" />
-          </TouchableOpacity>
+      <StatusBar style="dark" />
 
-          <TouchableOpacity style={styles.button} onPress={turnRelayOff}>
-            <View style={styles.buttonContent}>
-              <Gate size={48} color="#00bfff" />
-              <Text style={styles.buttonText}>Close Gate (OFF)</Text>
-            </View>
-            <MessageSquare size={24} color="#00bfff" />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Current Settings</Text>
-          <Text style={styles.settingText}>
-            Access Control: {relaySettings.accessControl === "AUT" ? "Authorized Numbers" : "All Numbers"}
-          </Text>
-          <Text style={styles.settingText}>
-            Latch Time:{" "}
-            {relaySettings.latchTime === "000"
-              ? "Momentary (0.5s)"
-              : `${parseInt(relaySettings.latchTime)} seconds`}
-          </Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Device Setup</Text>
-          <Text style={styles.cardSubtitle}>Configure your Connect4v</Text>
-          <TouchableOpacity 
-            style={styles.primaryButton} 
-            onPress={() => router.push('/setup')}
-          >
-            <Text style={styles.primaryButtonText}>Go to Setup</Text>
-          </TouchableOpacity>
-        </View>
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>GSM Opener</Text>
       </View>
+
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+        {/* Quick Actions Card */}
+        <Card title="Quick Actions" elevated>
+          <View style={styles.actionGrid}>
+            <TouchableOpacity style={styles.actionButton} onPress={turnRelayOn}>
+              <View style={[styles.iconContainer, { backgroundColor: colors.primary }]}>
+                <Ionicons name="power" size={28} color="white" />
+              </View>
+              <Text style={styles.actionText}>Open Gate</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionButton} onPress={turnRelayOff}>
+              <View style={[styles.iconContainer, { backgroundColor: colors.error }]}>
+                <Ionicons name="close-circle" size={28} color="white" />
+              </View>
+              <Text style={styles.actionText}>Close Gate</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionButton} onPress={checkStatus}>
+              <View style={[styles.iconContainer, { backgroundColor: colors.warning }]}>
+                <Ionicons name="information-circle" size={28} color="white" />
+              </View>
+              <Text style={styles.actionText}>Check Status</Text>
+            </TouchableOpacity>
+          </View>
+        </Card>
+
+        {/* Status Card */}
+        <Card title="Device Status" subtitle="Information about your GSM relay">
+          <View style={styles.statusRow}>
+            <Ionicons name="call" size={20} color={colors.text.secondary} />
+            <Text style={styles.statusLabel}>Phone Number:</Text>
+            <Text style={styles.statusValue}>{unitNumber || 'Not set'}</Text>
+          </View>
+          
+          <View style={styles.statusRow}>
+            <Ionicons name="time" size={20} color={colors.text.secondary} />
+            <Text style={styles.statusLabel}>Last Action:</Text>
+            <Text style={styles.statusValue}>
+              {lastAction 
+                ? `${lastAction.action} at ${lastAction.timestamp.toLocaleTimeString()}`
+                : 'No recent activity'}
+            </Text>
+          </View>
+        </Card>
+
+        {/* Help Card */}
+        <Card 
+          title="Need Help?" 
+          subtitle="Tap for support options"
+          onPress={() => {}} // Would navigate to help screen
+        >
+          <Text style={styles.helpText}>
+            If you're having trouble connecting to your GSM relay or need assistance with setup,
+            tap here for troubleshooting guides and support options.
+          </Text>
+        </Card>
+      </ScrollView>
     </View>
   );
 }
@@ -152,66 +166,69 @@ export default function HomePage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'white',
+    backgroundColor: colors.background,
+  },
+  header: {
+    backgroundColor: colors.surface,
+    paddingTop: 50,
+    paddingBottom: 12,
+    paddingHorizontal: 16,
+    ...shadows.sm,
+  },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: colors.text.primary,
   },
   content: {
-    padding: 16,
-    paddingBottom: 80,
+    flex: 1,
   },
-  card: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
+  contentContainer: {
+    padding: spacing.md,
   },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  cardSubtitle: {
-    fontSize: 16,
-    color: '#666',
-    marginBottom: 16,
-  },
-  button: {
-    borderWidth: 1,
-    borderColor: '#FFCC00',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
+  actionGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    marginTop: spacing.sm,
   },
-  buttonContent: {
+  actionButton: {
+    alignItems: 'center',
+    width: '30%',
+  },
+  iconContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+    ...shadows.sm,
+  },
+  actionText: {
+    fontSize: 14,
+    color: colors.text.primary,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 12,
   },
-  buttonText: {
-    fontSize: 18,
-    marginLeft: 16,
+  statusLabel: {
+    fontSize: 16,
+    color: colors.text.primary,
+    marginLeft: 8,
+    width: 120,
   },
-  commandText: {
+  statusValue: {
+    fontSize: 16,
+    color: colors.text.secondary,
+    flex: 1,
+  },
+  helpText: {
     fontSize: 14,
-    color: '#666',
-    marginBottom: 16,
-  },
-  settingText: {
-    fontSize: 18,
-    marginBottom: 8,
-  },
-  primaryButton: {
-    backgroundColor: '#FFCC00',
-    borderRadius: 8,
-    padding: 12,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  primaryButtonText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: '500',
+    color: colors.text.secondary,
+    lineHeight: 20,
   },
 });

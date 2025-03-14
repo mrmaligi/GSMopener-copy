@@ -1,99 +1,210 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Linking, Platform } from 'react-native';
-import { useRouter, useFocusEffect } from 'expo-router';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Text, ScrollView, Alert, Platform, Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Header from './components/Header';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { Header } from './components/Header';
+import { Card } from './components/Card';
+import { Button } from './components/Button';
+import { TextInputField } from './components/TextInputField';
+import { colors, spacing, shadows, borderRadius } from './styles/theme';
 
 export default function Step1Page() {
   const router = useRouter();
   const [unitNumber, setUnitNumber] = useState('');
-  const [password, setPassword] = useState('1234');
-  const [adminNumber, setAdminNumber] = useState('');
+  const [password, setPassword] = useState('1234'); // Default password
+  const [isLoading, setIsLoading] = useState(false);
+  
+  useEffect(() => {
+    loadData();
+  }, []);
 
   const loadData = async () => {
     try {
       const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
       const savedPassword = await AsyncStorage.getItem('password');
-      const savedAdminNumber = await AsyncStorage.getItem('adminNumber');
 
       if (savedUnitNumber) setUnitNumber(savedUnitNumber);
       if (savedPassword) setPassword(savedPassword);
-      if (savedAdminNumber) setAdminNumber(savedAdminNumber);
     } catch (error) {
       console.error('Error loading data:', error);
     }
   };
 
-  useFocusEffect(
-    React.useCallback(() => {
-      loadData();
-    }, [])
-  );
-
   const saveToLocalStorage = async () => {
     try {
-      await AsyncStorage.setItem('adminNumber', adminNumber);
+      await AsyncStorage.setItem('unitNumber', unitNumber);
+      await AsyncStorage.setItem('password', password);
+      
+      // Mark step as completed
+      const savedCompletedSteps = await AsyncStorage.getItem('completedSteps');
+      let completedSteps = savedCompletedSteps ? JSON.parse(savedCompletedSteps) : [];
+      
+      if (!completedSteps.includes('step1')) {
+        completedSteps.push('step1');
+        await AsyncStorage.setItem('completedSteps', JSON.stringify(completedSteps));
+      }
+      
+      Alert.alert(
+        'Success', 
+        'Device settings saved successfully',
+        [{ text: 'OK', onPress: () => router.push('/setup') }]
+      );
     } catch (error) {
       console.error('Error saving data:', error);
+      Alert.alert('Error', 'Failed to save settings');
     }
   };
 
-  // SMS Commands
-  const sendSMS = (command) => {
-    const smsUrl = Platform.select({
-      ios: `sms:${unitNumber}&body=${encodeURIComponent(command)}`,
-      android: `sms:${unitNumber}?body=${encodeURIComponent(command)}`,
-      default: `sms:${unitNumber}?body=${encodeURIComponent(command)}`,
-    });
-    
-    Linking.canOpenURL(smsUrl)
-      .then(supported => {
-        if (!supported) {
-          alert('SMS is not available on this device');
-          return;
-        }
-        return Linking.openURL(smsUrl);
-      })
-      .catch(err => console.error('An error occurred', err));
-  };
-
-  // Register Admin Number
-  const registerAdmin = () => {
-    if (!adminNumber) {
-      alert('Please enter an admin phone number');
+  const sendSMS = async (command: string) => {
+    if (!unitNumber) {
+      Alert.alert('Error', 'Please enter the GSM relay number first');
       return;
     }
-    sendSMS(`${password}TEL0061${adminNumber}#`);
-    saveToLocalStorage();
+
+    setIsLoading(true);
+
+    try {
+      const formattedUnitNumber = Platform.OS === 'ios' ? unitNumber.replace('+', '') : unitNumber;
+
+      const smsUrl = Platform.select({
+        ios: `sms:${formattedUnitNumber}&body=${encodeURIComponent(command)}`,
+        android: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
+        default: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
+      });
+
+      const supported = await Linking.canOpenURL(smsUrl);
+      
+      if (!supported) {
+        Alert.alert(
+          'Error',
+          'SMS is not available on this device. Please ensure an SMS app is installed.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
+      await Linking.openURL(smsUrl);
+    } catch (error) {
+      console.error('Failed to send SMS:', error);
+      Alert.alert(
+        'Error',
+        'Failed to open SMS. Please try again.',
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const testConnection = () => {
+    sendSMS(`${password}EE`);
   };
 
   return (
     <View style={styles.container}>
-      <Header title="Register Admin" showBack backTo="/setup" />
-      <ScrollView style={styles.content}>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Register Admin Number</Text>
-          <Text style={styles.cardSubtitle}>
-            We have to register the Admin number to the relay. This number will have full control over the device.
-          </Text>
-
-          <Text style={styles.inputLabel}>Admin Phone Number</Text>
-          <TextInput
-            style={styles.input}
-            value={adminNumber}
-            onChangeText={setAdminNumber}
-            placeholder="Example: 04xxxx3459"
+      <Header title="Initial Configuration" showBack backTo="/setup" />
+      
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+        <Card title="Configure Your GSM Opener" elevated>
+          <View style={styles.infoContainer}>
+            <Ionicons name="information-circle-outline" size={24} color={colors.primary} style={styles.infoIcon} />
+            <Text style={styles.infoText}>
+              Enter the phone number of your GSM relay device. The default password is usually "1234".
+            </Text>
+          </View>
+          
+          <TextInputField
+            label="GSM Relay Phone Number"
+            value={unitNumber}
+            onChangeText={setUnitNumber}
+            placeholder="Enter phone number"
             keyboardType="phone-pad"
+            autoComplete="tel"
+            containerStyle={styles.inputContainer}
           />
-          <Text style={styles.inputHint}>Format: Your country code + phone number(remove 0)</Text>
-
-          <TouchableOpacity 
-            style={styles.primaryButton}
-            onPress={registerAdmin}
-          >
-            <Text style={styles.primaryButtonText}>Send Registration SMS</Text>
-          </TouchableOpacity>
-        </View>
+          
+          <TextInputField
+            label="Device Password"
+            value={password}
+            onChangeText={(text) => {
+              // Only allow 4 digits
+              const filtered = text.replace(/[^0-9]/g, '').slice(0, 4);
+              setPassword(filtered);
+            }}
+            placeholder="Default is 1234"
+            keyboardType="number-pad"
+            maxLength={4}
+            secureTextEntry
+            containerStyle={styles.inputContainer}
+          />
+          
+          <View style={styles.buttonsContainer}>
+            <Button
+              title="Test Connection"
+              variant="outline"
+              onPress={testConnection}
+              loading={isLoading}
+              icon={<Ionicons name="flash-outline" size={20} color={colors.primary} />}
+              style={styles.button}
+            />
+            
+            <Button
+              title="Save Settings"
+              onPress={saveToLocalStorage}
+              disabled={!unitNumber || password.length !== 4}
+              style={styles.button}
+            />
+          </View>
+        </Card>
+        
+        <Card title="Setup Instructions">
+          <View style={styles.stepList}>
+            <View style={styles.step}>
+              <View style={styles.stepNumber}>
+                <Text style={styles.stepNumberText}>1</Text>
+              </View>
+              <View style={styles.stepContent}>
+                <Text style={styles.stepText}>
+                  Enter the phone number of your GSM relay device with country code
+                </Text>
+              </View>
+            </View>
+            
+            <View style={styles.step}>
+              <View style={styles.stepNumber}>
+                <Text style={styles.stepNumberText}>2</Text>
+              </View>
+              <View style={styles.stepContent}>
+                <Text style={styles.stepText}>
+                  Enter your device password (default is usually 1234)
+                </Text>
+              </View>
+            </View>
+            
+            <View style={styles.step}>
+              <View style={styles.stepNumber}>
+                <Text style={styles.stepNumberText}>3</Text>
+              </View>
+              <View style={styles.stepContent}>
+                <Text style={styles.stepText}>
+                  Test the connection to verify your device responds
+                </Text>
+              </View>
+            </View>
+            
+            <View style={styles.step}>
+              <View style={styles.stepNumber}>
+                <Text style={styles.stepNumberText}>4</Text>
+              </View>
+              <View style={styles.stepContent}>
+                <Text style={styles.stepText}>
+                  Save settings and continue to the next setup step
+                </Text>
+              </View>
+            </View>
+          </View>
+        </Card>
       </ScrollView>
     </View>
   );
@@ -102,55 +213,73 @@ export default function Step1Page() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'white',
+    backgroundColor: colors.background,
   },
   content: {
-    padding: 16,
-    paddingBottom: 80,
+    flex: 1,
   },
-  card: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
+  contentContainer: {
+    padding: spacing.md,
+    paddingBottom: spacing.xxl,
   },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  cardSubtitle: {
-    fontSize: 16,
-    color: '#666',
-    marginBottom: 16,
-  },
-  inputLabel: {
-    fontSize: 18,
-    marginBottom: 8,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    marginBottom: 8,
-  },
-  inputHint: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 16,
-  },
-  primaryButton: {
-    backgroundColor: '#00bfff',
-    borderRadius: 8,
-    padding: 12,
+  infoContainer: {
+    flexDirection: 'row',
+    backgroundColor: `${colors.primary}15`,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
     alignItems: 'center',
   },
-  primaryButtonText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: '500',
+  infoIcon: {
+    marginRight: spacing.sm,
+  },
+  infoText: {
+    flex: 1,
+    fontSize: 14,
+    color: colors.text.secondary,
+    lineHeight: 20,
+  },
+  inputContainer: {
+    marginBottom: spacing.md,
+  },
+  buttonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.sm,
+  },
+  button: {
+    flex: 1,
+    marginHorizontal: spacing.xs,
+  },
+  stepList: {
+    marginTop: spacing.xs,
+  },
+  step: {
+    flexDirection: 'row',
+    marginBottom: spacing.md,
+    alignItems: 'flex-start',
+  },
+  stepNumber: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: spacing.sm,
+    marginTop: 2,
+  },
+  stepNumberText: {
+    color: colors.text.inverse,
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  stepContent: {
+    flex: 1,
+  },
+  stepText: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    lineHeight: 20,
   },
 });

@@ -1,14 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ArrowLeft } from 'lucide-react-native';
-import Header from '../components/Header';
-import DeviceInfo from '../components/DeviceInfo';
+import { Ionicons } from '@expo/vector-icons';
+import { StatusBar } from 'expo-status-bar';
+import { Card } from '../components/Card';
+import { Header } from '../components/Header';
+import { colors, spacing, shadows, borderRadius } from '../styles/theme';
+
+type SetupStep = {
+  id: string;
+  title: string;
+  description: string;
+  icon: string;
+  route: string;
+};
 
 export default function SetupPage() {
   const router = useRouter();
   const [unitNumber, setUnitNumber] = useState('');
+  const [password, setPassword] = useState('');
+  const [completedSteps, setCompletedSteps] = useState<string[]>([]);
 
   useEffect(() => {
     loadData();
@@ -17,89 +29,154 @@ export default function SetupPage() {
   const loadData = async () => {
     try {
       const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
+      const savedPassword = await AsyncStorage.getItem('password');
+      const savedCompletedSteps = await AsyncStorage.getItem('completedSteps');
+
       if (savedUnitNumber) setUnitNumber(savedUnitNumber);
+      if (savedPassword) setPassword(savedPassword);
+      if (savedCompletedSteps) setCompletedSteps(JSON.parse(savedCompletedSteps));
     } catch (error) {
       console.error('Error loading data:', error);
     }
   };
 
-  const saveToLocalStorage = async () => {
+  const markStepComplete = async (stepId: string) => {
     try {
-      await AsyncStorage.setItem('unitNumber', unitNumber);
-      alert('Settings saved successfully!');
+      if (!completedSteps.includes(stepId)) {
+        const newCompletedSteps = [...completedSteps, stepId];
+        setCompletedSteps(newCompletedSteps);
+        await AsyncStorage.setItem('completedSteps', JSON.stringify(newCompletedSteps));
+      }
     } catch (error) {
-      console.error('Error saving data:', error);
-      alert('Failed to save settings');
+      console.error('Error saving completed step:', error);
     }
+  };
+
+  const setupSteps: SetupStep[] = [
+    {
+      id: 'step1',
+      title: 'Initial Configuration',
+      description: 'Set up your GSM opener device',
+      icon: 'settings-outline',
+      route: '/step1'
+    },
+    {
+      id: 'step2',
+      title: 'Change Password',
+      description: 'Update default device password',
+      icon: 'key-outline',
+      route: '/step2'
+    },
+    {
+      id: 'step3',
+      title: 'User Management',
+      description: 'Add authorized phone numbers',
+      icon: 'people-outline',
+      route: '/step3'
+    },
+    {
+      id: 'step4',
+      title: 'Relay Settings',
+      description: 'Configure relay behavior',
+      icon: 'options-outline',
+      route: '/step4'
+    },
+  ];
+
+  const navigateToStep = (step: SetupStep) => {
+    if (step.id !== 'step1' && !unitNumber) {
+      Alert.alert(
+        'Setup Required',
+        'Please complete the initial setup first to configure your device number.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
+    router.push(step.route);
   };
 
   return (
     <View style={styles.container}>
-      <Header title="Setup" />
-      <ScrollView style={styles.content}>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Device Configuration</Text>
-          <Text style={styles.cardSubtitle}>Follow these steps to set up your Connect4v</Text>
-
-          <TouchableOpacity 
-            style={styles.menuItem}
-            onPress={() => router.push('/step1')}
-          >
-            <View style={styles.menuItemContent}>
-              <View style={styles.numberCircle}>
-                <Text style={styles.numberText}>1</Text>
-              </View>
-              <Text style={styles.menuItemText}>Register Admin Number</Text>
+      <Header title="Device Setup" />
+      
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+        <Card title="Device Configuration" subtitle="Follow these steps to set up your GSM relay" elevated>
+          <View style={styles.setupStatus}>
+            <View style={styles.deviceInfoContainer}>
+              <Ionicons name="phone-portrait-outline" size={24} color={colors.primary} />
+              <Text style={styles.deviceInfoLabel}>Device Number:</Text>
+              <Text style={styles.deviceInfoValue}>{unitNumber || 'Not configured'}</Text>
             </View>
-            <ArrowLeft style={styles.arrowIcon} size={24} color="#666" />
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.menuItem}
-            onPress={() => router.push('/step2')}
-          >
-            <View style={styles.menuItemContent}>
-              <View style={styles.numberCircle}>
-                <Text style={styles.numberText}>2</Text>
+            
+            <View style={styles.progressContainer}>
+              <Text style={styles.progressText}>
+                {completedSteps.length} of {setupSteps.length} steps completed
+              </Text>
+              <View style={styles.progressBar}>
+                <View 
+                  style={[
+                    styles.progressFill, 
+                    {width: `${(completedSteps.length / setupSteps.length) * 100}%`}
+                  ]} 
+                />
               </View>
-              <Text style={styles.menuItemText}>Change Admin Password</Text>
             </View>
-            <ArrowLeft style={styles.arrowIcon} size={24} color="#666" />
-          </TouchableOpacity>
-
+          </View>
+        </Card>
+        
+        {setupSteps.map((step, index) => (
           <TouchableOpacity 
-            style={styles.menuItem}
-            onPress={() => router.push('/step3')}
+            key={step.id}
+            onPress={() => navigateToStep(step)}
+            style={styles.stepContainer}
           >
-            <View style={styles.menuItemContent}>
-              <View style={styles.numberCircle}>
-                <Text style={styles.numberText}>3</Text>
+            <Card 
+              style={[
+                styles.stepCard,
+                completedSteps.includes(step.id) && styles.completedStep
+              ]}
+            >
+              <View style={styles.stepContent}>
+                <View style={styles.stepIconContainer}>
+                  <Ionicons 
+                    name={step.icon as any}
+                    size={24} 
+                    color={completedSteps.includes(step.id) ? colors.success : colors.primary}
+                  />
+                </View>
+                
+                <View style={styles.stepTextContainer}>
+                  <Text style={styles.stepTitle}>{step.title}</Text>
+                  <Text style={styles.stepDescription}>{step.description}</Text>
+                </View>
+                
+                <View style={styles.stepIndicator}>
+                  {completedSteps.includes(step.id) ? (
+                    <Ionicons name="checkmark-circle" size={24} color={colors.success} />
+                  ) : (
+                    <Ionicons name="chevron-forward" size={24} color={colors.text.secondary} />
+                  )}
+                </View>
               </View>
-              <Text style={styles.menuItemText}>Authorized User Management</Text>
-            </View>
-            <ArrowLeft style={styles.arrowIcon} size={24} color="#666" />
+            </Card>
           </TouchableOpacity>
-
+        ))}
+        
+        <Card title="Need Help?" style={styles.helpCard}>
+          <Text style={styles.helpText}>
+            If you're having trouble with the setup process, check our documentation
+            or contact support for assistance.
+          </Text>
+          
           <TouchableOpacity 
-            style={styles.menuItem}
-            onPress={() => router.push('/step4')}
+            style={styles.supportButton}
+            onPress={() => {/* Would navigate to support page */}}
           >
-            <View style={styles.menuItemContent}>
-              <View style={styles.numberCircle}>
-                <Text style={styles.numberText}>4</Text>
-              </View>
-              <Text style={styles.menuItemText}>Relay Control Settings</Text>
-            </View>
-            <ArrowLeft style={styles.arrowIcon} size={24} color="#666" />
+            <Ionicons name="help-circle-outline" size={20} color={colors.primary} />
+            <Text style={styles.supportButtonText}>View Support Guide</Text>
           </TouchableOpacity>
-        </View>
-
-        <TouchableOpacity 
-          style={styles.saveButton}
-          onPress={saveToLocalStorage}
-        >
-          <Text style={styles.saveButtonText}>Save All Settings</Text>
-        </TouchableOpacity>
+        </Card>
       </ScrollView>
     </View>
   );
@@ -108,72 +185,110 @@ export default function SetupPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'white',
+    backgroundColor: colors.background,
   },
   content: {
-    padding: 16,
-    paddingBottom: 80,
+    flex: 1,
   },
-  card: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
+  contentContainer: {
+    padding: spacing.md,
+    paddingBottom: spacing.xxl,
   },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 8,
+  setupStatus: {
+    marginVertical: spacing.sm,
   },
-  cardSubtitle: {
+  deviceInfoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  deviceInfoLabel: {
     fontSize: 16,
-    color: '#666',
-    marginBottom: 16,
-  },
-  menuItem: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  menuItemContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  numberCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#00bfff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  numberText: {
-    color: 'white',
-    fontWeight: '600',
-  },
-  menuItemText: {
-    fontSize: 18,
-  },
-  arrowIcon: {
-    transform: [{ rotate: '180deg' }],
-  },
-  saveButton: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 8,
-    padding: 12,
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  saveButtonText: {
-    color: 'white',
-    fontSize: 18,
     fontWeight: '500',
+    color: colors.text.primary,
+    marginLeft: spacing.sm,
+    marginRight: spacing.xs,
+  },
+  deviceInfoValue: {
+    fontSize: 16,
+    color: colors.text.secondary,
+    flex: 1,
+  },
+  progressContainer: {
+    marginTop: spacing.xs,
+  },
+  progressText: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    marginBottom: spacing.xs,
+  },
+  progressBar: {
+    height: 6,
+    backgroundColor: colors.surfaceVariant,
+    borderRadius: borderRadius.pill,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: colors.primary,
+    borderRadius: borderRadius.pill,
+  },
+  stepContainer: {
+    marginBottom: spacing.sm,
+  },
+  stepCard: {
+    padding: spacing.sm,
+  },
+  completedStep: {
+    borderLeftWidth: 4,
+    borderLeftColor: colors.success,
+  },
+  stepContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  stepIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: `${colors.primary}10`,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: spacing.sm,
+  },
+  stepTextContainer: {
+    flex: 1,
+  },
+  stepTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text.primary,
+  },
+  stepDescription: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    marginTop: 2,
+  },
+  stepIndicator: {
+    marginLeft: spacing.sm,
+  },
+  helpCard: {
+    marginTop: spacing.md,
+  },
+  helpText: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    lineHeight: 20,
+    marginBottom: spacing.md,
+  },
+  supportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+  },
+  supportButtonText: {
+    fontSize: 16,
+    color: colors.primary,
+    marginLeft: spacing.xs,
   },
 });

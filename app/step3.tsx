@@ -1,222 +1,229 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Linking, Platform, Alert } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, Alert, Platform, Linking, TouchableOpacity, TextInput } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Clipboard from 'expo-clipboard';
-import Header from './components/Header';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { Header } from './components/Header';
+import { Card } from './components/Card';
+import { Button } from './components/Button';
+import { TextInputField } from './components/TextInputField';
+import { colors, spacing, shadows, borderRadius } from './styles/theme';
 
-export default function AuthorizedUsersPage() {
+interface User {
+  phoneNumber: string;
+  name: string;
+}
+
+export default function Step3Page() {
   const router = useRouter();
   const [unitNumber, setUnitNumber] = useState('');
-  const [password, setPassword] = useState('1234');
-  const [serialNumber, setSerialNumber] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [startTime, setStartTime] = useState('');
-  const [endTime, setEndTime] = useState('');
+  const [password, setPassword] = useState('');
+  const [newUserPhone, setNewUserPhone] = useState('');
+  const [newUserName, setNewUserName] = useState('');
+  const [users, setUsers] = useState<User[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  useEffect(() => {
+    loadData();
+  }, []);
 
   const loadData = async () => {
     try {
       const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
       const savedPassword = await AsyncStorage.getItem('password');
+      const savedUsers = await AsyncStorage.getItem('authorizedUsers');
 
       if (savedUnitNumber) setUnitNumber(savedUnitNumber);
       if (savedPassword) setPassword(savedPassword);
+      if (savedUsers) setUsers(JSON.parse(savedUsers));
     } catch (error) {
       console.error('Error loading data:', error);
     }
   };
 
-  useFocusEffect(
-    React.useCallback(() => {
-      loadData();
-    }, [])
-  );
+  const saveUsers = async (updatedUsers: User[]) => {
+    try {
+      await AsyncStorage.setItem('authorizedUsers', JSON.stringify(updatedUsers));
+      
+      // Mark step as completed
+      const savedCompletedSteps = await AsyncStorage.getItem('completedSteps');
+      let completedSteps = savedCompletedSteps ? JSON.parse(savedCompletedSteps) : [];
+      
+      if (!completedSteps.includes('step3')) {
+        completedSteps.push('step3');
+        await AsyncStorage.setItem('completedSteps', JSON.stringify(completedSteps));
+      }
+    } catch (error) {
+      console.error('Error saving data:', error);
+      Alert.alert('Error', 'Failed to save users');
+    }
+  };
 
-  const sendSMS = async (command) => {
+  const sendSMS = async (command: string) => {
     if (!unitNumber) {
-      Alert.alert('Error', 'Please set the relay phone number in settings');
+      Alert.alert('Error', 'GSM relay number not set. Please configure in Step 1 first.');
       return;
     }
 
-    const smsUrl = Platform.select({
-      ios: `sms:${unitNumber}`,
-      android: `sms:${unitNumber}?body=${encodeURIComponent(command)}`,
-      default: `sms:${unitNumber}?body=${encodeURIComponent(command)}`,
-    });
+    setIsLoading(true);
 
-    if (Platform.OS === 'ios') {
-      await Clipboard.setStringAsync(command);
-      Alert.alert('Info', 'Command copied to clipboard. Please paste it in the SMS app.');
+    try {
+      const formattedUnitNumber = Platform.OS === 'ios' ? unitNumber.replace('+', '') : unitNumber;
+
+      const smsUrl = Platform.select({
+        ios: `sms:${formattedUnitNumber}&body=${encodeURIComponent(command)}`,
+        android: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
+        default: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
+      });
+
+      const supported = await Linking.canOpenURL(smsUrl);
+      
+      if (!supported) {
+        Alert.alert(
+          'Error',
+          'SMS is not available on this device. Please ensure an SMS app is installed.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+
+      await Linking.openURL(smsUrl);
+    } catch (error) {
+      console.error('Failed to send SMS:', error);
+      Alert.alert(
+        'Error',
+        'Failed to open SMS. Please try again.',
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setIsLoading(false);
     }
-
-    Linking.canOpenURL(smsUrl)
-      .then(supported => {
-        if (!supported) {
-          Alert.alert('Error', 'SMS is not available on this device');
-          return;
-        }
-        return Linking.openURL(smsUrl);
-      })
-      .catch(err => console.error('An error occurred', err));
   };
 
-  const addAuthorizedUser = async () => {  // Mark function as async
-    if (!phoneNumber) {
+  const addUser = () => {
+    if (!newUserPhone) {
       Alert.alert('Error', 'Please enter a phone number');
       return;
     }
-    if (!serialNumber || !/^\d+$/.test(serialNumber)) {
-      Alert.alert('Error', 'User ID must be numeric');
+    
+    // Check if phone already exists
+    if (users.some(user => user.phoneNumber === newUserPhone)) {
+      Alert.alert('Error', 'This phone number is already authorized');
       return;
     }
-    const numValue = parseInt(serialNumber, 10);
-    if (numValue < 1 || numValue > 200) {
-      Alert.alert('Error', 'User ID must be between 1 and 200');
-      return;
-    }
-    // Send SMS with or without time restrictions
-    if (startTime && endTime) {
-      await sendSMS(`${password}A${serialNumber}#${phoneNumber}#${startTime}#${endTime}#`);
-    } else {
-      await sendSMS(`${password}A${serialNumber}#${phoneNumber}#`);
-    }
-    // Update AsyncStorage with new user
-    try {
-      const savedUsers = await AsyncStorage.getItem('authorizedUsers');
-      const users = savedUsers ? JSON.parse(savedUsers) : [];
-      users.push({ serial: serialNumber, phone: phoneNumber, startTime, endTime });
-      await AsyncStorage.setItem('authorizedUsers', JSON.stringify(users));
-      Alert.alert('Success', 'Authorized user added and list updated.');
-    } catch (error) {
-      console.error('Error updating authorized users:', error);
-    }
+    
+    // Add user locally
+    const newUser = {
+      phoneNumber: newUserPhone,
+      name: newUserName || 'User ' + (users.length + 1)
+    };
+    
+    const updatedUsers = [...users, newUser];
+    setUsers(updatedUsers);
+    saveUsers(updatedUsers);
+    
+    // Send command to add user to device
+    sendSMS(`${password}WHL${newUserPhone}#`);
+    
+    // Clear form
+    setNewUserPhone('');
+    setNewUserName('');
+    
+    Alert.alert('Success', 'User added successfully');
   };
 
-  const deleteAuthorizedUser = async () => {  // Mark as async
-    if (!serialNumber || !/^\d+$/.test(serialNumber)) {
-      Alert.alert('Error', 'User ID must be numeric');
-      return;
-    }
-    const numValue = parseInt(serialNumber, 10);
-    if (numValue < 1 || numValue > 200) {
-      Alert.alert('Error', 'User ID must be between 1 and 200');
-      return;
-    }
-    await sendSMS(`${password}A${serialNumber}##`);
-    try {
-      const savedUsers = await AsyncStorage.getItem('authorizedUsers');
-      let users = savedUsers ? JSON.parse(savedUsers) : [];
-      // Remove user matching the current serialNumber
-      users = users.filter(u => u.serial !== serialNumber);
-      await AsyncStorage.setItem('authorizedUsers', JSON.stringify(users));
-      Alert.alert('Success', 'Authorized user deleted and list updated.');
-    } catch (error) {
-      console.error('Error updating authorized users:', error);
-    }
-  };
-
-  const deleteAllUsers = () => {
+  const removeUser = (phoneNumber: string) => {
     Alert.alert(
-      'Confirm Delete All',
-      'Are you sure you want to delete all authorized users? This cannot be undone.',
+      'Confirm Delete',
+      'Are you sure you want to remove this user?',
       [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Delete All',
-          onPress: () => sendSMS(`${password}AR#`),
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Remove', 
           style: 'destructive',
-        },
+          onPress: () => {
+            // Remove user locally
+            const updatedUsers = users.filter(user => user.phoneNumber !== phoneNumber);
+            setUsers(updatedUsers);
+            saveUsers(updatedUsers);
+            
+            // Send command to remove user from device
+            sendSMS(`${password}RHL${phoneNumber}#`);
+          }
+        }
       ]
     );
   };
 
   return (
     <View style={styles.container}>
-      <Header title="Authorized Users" showBack backTo="/setup" />
-      <ScrollView style={styles.content}>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Add Authorized User</Text>
-          <Text style={styles.cardSubtitle}>
-            Add a phone number that will be authorized to control the relay unit.
-          </Text>
-
-          <Text style={styles.inputLabel}>User ID (1-200)</Text>
-          <TextInput
-            style={styles.input}
-            value={serialNumber}
-            onChangeText={(text) => {
-              const filtered = text.replace(/[^0-9]/g, '').slice(0, 3);
-              setSerialNumber(filtered);
-            }}
-            placeholder="Enter user ID"
-            keyboardType="number-pad"
-            maxLength={3}
-          />
-          <Text style={styles.inputHint}>Enter the user id (numeric, 1-200)</Text>
-
-          <Text style={styles.inputLabel}>Phone Number</Text>
-          <TextInput
-            style={styles.input}
-            value={phoneNumber}
-            onChangeText={setPhoneNumber}
-            placeholder="Example: 0469843459"
+      <Header title="User Management" showBack backTo="/setup" />
+      
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+        <Card title="Add Authorized User" elevated>
+          <View style={styles.infoContainer}>
+            <Ionicons name="information-circle-outline" size={24} color={colors.primary} style={styles.infoIcon} />
+            <Text style={styles.infoText}>
+              Add phone numbers that are authorized to control the GSM relay.
+            </Text>
+          </View>
+          
+          <TextInputField
+            label="Phone Number"
+            value={newUserPhone}
+            onChangeText={setNewUserPhone}
+            placeholder="Enter phone number with country code"
             keyboardType="phone-pad"
           />
-          <Text style={styles.inputHint}>Enter without country code or special characters</Text>
           
-          <Text style={styles.inputLabel}>Start Time (optional)</Text>
-          <TextInput
-            style={styles.input}
-            value={startTime}
-            onChangeText={setStartTime}
-            placeholder="e.g., 2408050800"
-            keyboardType="number-pad"
-            maxLength={10}
+          <TextInputField
+            label="Name (Optional)"
+            value={newUserName}
+            onChangeText={setNewUserName}
+            placeholder="Enter user name"
           />
-          <Text style={styles.inputHint}>Format: YYMMDDHHMM (ex: 2408050800)</Text>
-
-          <Text style={styles.inputLabel}>End Time (optional)</Text>
-          <TextInput
-            style={styles.input}
-            value={endTime}
-            onChangeText={setEndTime}
-            placeholder="e.g., 2409051000"
-            keyboardType="number-pad"
-            maxLength={10}
+          
+          <Button
+            title="Add User"
+            onPress={addUser}
+            loading={isLoading}
+            disabled={!newUserPhone}
+            icon={<Ionicons name="person-add-outline" size={20} color="white" />}
+            fullWidth
           />
-          <Text style={styles.inputHint}>Format: YYMMDDHHMM (ex: 2409051000)</Text>
-
-          <TouchableOpacity 
-            style={styles.primaryButton}
-            onPress={addAuthorizedUser}
-          >
-            <Text style={styles.primaryButtonText}>Add User</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={[styles.secondaryButton, styles.marginTop]}
-            onPress={deleteAuthorizedUser}
-          >
-            <Text style={styles.secondaryButtonText}>Delete User at Position {serialNumber}</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={[styles.dangerButton, styles.marginTop]}
-            onPress={deleteAllUsers}
-          >
-            <Text style={styles.dangerButtonText}>Delete All Users</Text>
-          </TouchableOpacity>
-        </View>
-
-        <TouchableOpacity 
-          style={styles.primaryButton}
-          onPress={() => router.push("/authorized-users-list")}
-        >
-          <Text style={styles.primaryButtonText}>View Authorized Users List</Text>
-        </TouchableOpacity>
+        </Card>
+        
+        <Card title="Authorized Users">
+          {users.length === 0 ? (
+            <Text style={styles.emptyText}>No authorized users yet.</Text>
+          ) : (
+            users.map((user, index) => (
+              <View key={user.phoneNumber} style={[
+                styles.userItem,
+                index < users.length - 1 && styles.userItemBorder
+              ]}>
+                <View style={styles.userInfo}>
+                  <Text style={styles.userName}>{user.name}</Text>
+                  <Text style={styles.userPhone}>{user.phoneNumber}</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={() => removeUser(user.phoneNumber)}
+                >
+                  <Ionicons name="trash-outline" size={22} color={colors.error} />
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
+        </Card>
+        
+        <Button
+          title="Continue to Next Step"
+          variant="secondary"
+          onPress={() => router.push('/step4')}
+          style={styles.nextButton}
+          fullWidth
+        />
       </ScrollView>
     </View>
   );
@@ -225,95 +232,65 @@ export default function AuthorizedUsersPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.background,
   },
   content: {
-    padding: 16,
-    paddingBottom: 80,
+    flex: 1,
   },
-  card: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
-    backgroundColor: 'white',
+  contentContainer: {
+    padding: spacing.md,
+    paddingBottom: spacing.xxl,
   },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 8,
+  infoContainer: {
+    flexDirection: 'row',
+    backgroundColor: `${colors.primary}15`,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    alignItems: 'center',
   },
-  cardSubtitle: {
-    fontSize: 16,
-    color: '#666',
-    marginBottom: 16,
+  infoIcon: {
+    marginRight: spacing.sm,
   },
-  inputLabel: {
-    fontSize: 16,
-    marginBottom: 8,
-    fontWeight: '500',
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    marginBottom: 8,
-  },
-  inputHint: {
+  infoText: {
+    flex: 1,
     fontSize: 14,
-    color: '#666',
-    marginBottom: 16,
+    color: colors.text.secondary,
+    lineHeight: 20,
   },
-  marginTop: {
-    marginTop: 12,
+  emptyText: {
+    fontSize: 16,
+    color: colors.text.secondary,
+    textAlign: 'center',
+    padding: spacing.md,
   },
-  primaryButton: {
-    backgroundColor: '#00bfff',
-    borderRadius: 8,
-    padding: 12,
+  userItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    paddingVertical: spacing.sm,
   },
-  primaryButtonText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: '500',
+  userItemBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  secondaryButton: {
-    backgroundColor: 'white',
-    borderWidth: 1,
-    borderColor: '#00bfff',
-    borderRadius: 8,
-    padding: 12,
-    alignItems: 'center',
+  userInfo: {
+    flex: 1,
   },
-  secondaryButtonText: {
-    color: '#00bfff',
+  userName: {
     fontSize: 16,
     fontWeight: '500',
+    color: colors.text.primary,
+    marginBottom: 2,
   },
-  dangerButton: {
-    backgroundColor: 'white',
-    borderWidth: 1,
-    borderColor: '#ff3b30',
-    borderRadius: 8,
-    padding: 12,
-    alignItems: 'center',
+  userPhone: {
+    fontSize: 14,
+    color: colors.text.secondary,
   },
-  dangerButtonText: {
-    color: '#ff3b30',
-    fontSize: 16,
-    fontWeight: '500',
+  deleteButton: {
+    padding: spacing.sm,
   },
-  commandExample: {
-    fontSize: 16,
-    marginBottom: 8,
-  },
-  codeText: {
-    fontFamily: 'monospace',
-    backgroundColor: '#f5f5f5',
-    paddingHorizontal: 4,
+  nextButton: {
+    marginTop: spacing.lg,
   },
 });
