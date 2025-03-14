@@ -1,17 +1,18 @@
 import React from 'react';
 import { 
   StyleSheet, 
-  Text, 
   TouchableOpacity, 
-  ActivityIndicator,
-  View,
-  StyleProp,
-  ViewStyle,
-  TextStyle,
+  Text, 
+  ActivityIndicator, 
+  View, 
+  StyleProp, 
+  ViewStyle, 
+  TextStyle 
 } from 'react-native';
-import { colors, borderRadius, spacing } from '../styles/theme';
+import { spacing, borderRadius } from '../styles/theme';
+import { useTheme } from '../contexts/ThemeContext';
 
-type ButtonVariant = 'primary' | 'secondary' | 'outline' | 'ghost';
+type ButtonVariant = 'solid' | 'outline' | 'ghost';
 type ButtonSize = 'sm' | 'md' | 'lg';
 
 interface ButtonProps {
@@ -19,11 +20,11 @@ interface ButtonProps {
   onPress: () => void;
   variant?: ButtonVariant;
   size?: ButtonSize;
+  fullWidth?: boolean;
   disabled?: boolean;
   loading?: boolean;
   icon?: React.ReactNode;
   iconPosition?: 'left' | 'right';
-  fullWidth?: boolean;
   style?: StyleProp<ViewStyle>;
   textStyle?: StyleProp<TextStyle>;
 }
@@ -31,30 +32,75 @@ interface ButtonProps {
 export const Button: React.FC<ButtonProps> = ({
   title,
   onPress,
-  variant = 'primary',
+  variant = 'solid',
   size = 'md',
+  fullWidth = false,
   disabled = false,
   loading = false,
   icon,
   iconPosition = 'left',
-  fullWidth = false,
   style,
   textStyle,
 }) => {
+  const { colors } = useTheme();
+  
+  // Create dynamic styles based on theme
+  const dynamicStyles = {
+    solid: {
+      backgroundColor: colors.primary,
+      borderColor: colors.primary,
+    },
+    solidDisabled: {
+      backgroundColor: colors.surfaceVariant,
+      borderColor: colors.surfaceVariant,
+    },
+    outline: {
+      backgroundColor: 'transparent',
+      borderColor: colors.primary,
+    },
+    outlineDisabled: {
+      borderColor: colors.text.disabled,
+    },
+    ghost: {
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
+    },
+    solidText: {
+      color: colors.text.inverse,
+    },
+    outlineText: {
+      color: colors.primary,
+    },
+    ghostText: {
+      color: colors.primary,
+    },
+    disabledText: {
+      color: colors.text.disabled,
+    },
+  };
+
   const buttonStyles = [
     styles.button,
-    styles[`${variant}Button`],
-    styles[`${size}Button`],
+    styles[size],
+    variant === 'solid' && [styles.solid, dynamicStyles.solid],
+    variant === 'outline' && [styles.outline, dynamicStyles.outline],
+    variant === 'ghost' && [styles.ghost, dynamicStyles.ghost],
     fullWidth && styles.fullWidth,
-    disabled && styles.disabledButton,
+    disabled && [
+      styles.disabled,
+      variant === 'solid' && dynamicStyles.solidDisabled,
+      variant === 'outline' && dynamicStyles.outlineDisabled,
+    ],
     style,
   ];
 
   const textStyles = [
     styles.text,
-    styles[`${variant}Text`],
     styles[`${size}Text`],
-    disabled && styles.disabledText,
+    variant === 'solid' && dynamicStyles.solidText,
+    variant === 'outline' && dynamicStyles.outlineText,
+    variant === 'ghost' && dynamicStyles.ghostText,
+    disabled && dynamicStyles.disabledText,
     textStyle,
   ];
 
@@ -96,54 +142,38 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: borderRadius.md,
-  },
-  primaryButton: {
-    backgroundColor: colors.primary,
-  },
-  secondaryButton: {
-    backgroundColor: colors.secondary,
-  },
-  outlineButton: {
-    backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: colors.primary,
   },
-  ghostButton: {
-    backgroundColor: 'transparent',
+  solid: {
+    // Colors are applied dynamically
   },
-  smButton: {
+  outline: {
+    // Colors are applied dynamically
+  },
+  ghost: {
+    // Colors are applied dynamically
+  },
+  disabled: {
+    // Colors are applied dynamically
+  },
+  sm: {
     paddingVertical: spacing.xs,
     paddingHorizontal: spacing.md,
   },
-  mdButton: {
+  md: {
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.lg,
   },
-  lgButton: {
+  lg: {
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.xl,
   },
   fullWidth: {
     width: '100%',
   },
-  disabledButton: {
-    opacity: 0.6,
-  },
   text: {
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  primaryText: {
-    color: colors.text.inverse,
-  },
-  secondaryText: {
-    color: colors.text.inverse,
-  },
-  outlineText: {
-    color: colors.primary,
-  },
-  ghostText: {
-    color: colors.primary,
+    fontWeight: '500',
+    fontSize: 16,
   },
   smText: {
     fontSize: 14,
@@ -154,9 +184,6 @@ const styles = StyleSheet.create({
   lgText: {
     fontSize: 18,
   },
-  disabledText: {
-    color: colors.text.disabled,
-  },
   iconContainer: {
     marginRight: spacing.xs,
   },
@@ -165,3 +192,6 @@ const styles = StyleSheet.create({
     marginLeft: spacing.xs,
   },
 });
+
+// Add default export for expo-router compatibility
+export default Button;

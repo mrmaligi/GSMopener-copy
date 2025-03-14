@@ -6,14 +6,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { Card } from '../components/Card';
 import { TextInputField } from '../components/TextInputField';
 import { Button } from '../components/Button';
-import { colors, spacing, shadows, borderRadius } from '../styles/theme';
+import { spacing, shadows, borderRadius } from '../styles/theme';
+import { useTheme } from '../contexts/ThemeContext';
 
 export default function SettingsPage() {
   const [unitNumber, setUnitNumber] = useState('');
   const [password, setPassword] = useState('');
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  
+  // Use theme context
+  const { isDarkMode, setDarkMode, colors } = useTheme();
 
   useEffect(() => {
     loadSettings();
@@ -24,12 +27,10 @@ export default function SettingsPage() {
       const storedUnitNumber = await AsyncStorage.getItem('unitNumber');
       const storedPassword = await AsyncStorage.getItem('password');
       const storedNotifications = await AsyncStorage.getItem('notificationsEnabled');
-      const storedDarkMode = await AsyncStorage.getItem('darkMode');
 
       if (storedUnitNumber) setUnitNumber(storedUnitNumber);
       if (storedPassword) setPassword(storedPassword);
       if (storedNotifications) setNotificationsEnabled(storedNotifications === 'true');
-      if (storedDarkMode) setDarkMode(storedDarkMode === 'true');
     } catch (error) {
       console.error('Failed to load settings:', error);
     }
@@ -52,7 +53,6 @@ export default function SettingsPage() {
       await AsyncStorage.setItem('unitNumber', unitNumber);
       await AsyncStorage.setItem('password', password);
       await AsyncStorage.setItem('notificationsEnabled', notificationsEnabled.toString());
-      await AsyncStorage.setItem('darkMode', darkMode.toString());
 
       Alert.alert('Success', 'Settings saved successfully');
     } catch (error) {
@@ -63,13 +63,32 @@ export default function SettingsPage() {
     }
   };
 
+  // Use dynamic styles based on theme
+  const dynamicStyles = {
+    container: {
+      backgroundColor: colors.background,
+    },
+    header: {
+      backgroundColor: colors.surface,
+    },
+    text: {
+      color: colors.text.primary,
+    },
+    navItem: {
+      borderBottomColor: colors.border,
+    },
+    navItemText: {
+      color: colors.text.primary,
+    }
+  };
+
   return (
-    <View style={styles.container}>
-      <StatusBar style="dark" />
+    <View style={[styles.container, dynamicStyles.container]}>
+      <StatusBar style={isDarkMode ? "light" : "dark"} />
 
       {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Settings</Text>
+      <View style={[styles.header, dynamicStyles.header]}>
+        <Text style={[styles.headerTitle, dynamicStyles.text]}>Settings</Text>
       </View>
 
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
@@ -111,8 +130,8 @@ export default function SettingsPage() {
         <Card title="App Preferences">
           <View style={styles.preferenceRow}>
             <View style={styles.preferenceTextContainer}>
-              <Text style={styles.preferenceLabel}>Enable Notifications</Text>
-              <Text style={styles.preferenceDescription}>
+              <Text style={[styles.preferenceLabel, dynamicStyles.text]}>Enable Notifications</Text>
+              <Text style={[styles.preferenceDescription, { color: colors.text.secondary }]}>
                 Receive alerts when your gate is opened
               </Text>
             </View>
@@ -126,16 +145,18 @@ export default function SettingsPage() {
 
           <View style={styles.preferenceRow}>
             <View style={styles.preferenceTextContainer}>
-              <Text style={styles.preferenceLabel}>Dark Mode</Text>
-              <Text style={styles.preferenceDescription}>
+              <Text style={[styles.preferenceLabel, dynamicStyles.text]}>Dark Mode</Text>
+              <Text style={[styles.preferenceDescription, { color: colors.text.secondary }]}>
                 Use dark theme for the app interface
               </Text>
             </View>
             <Switch
-              value={darkMode}
-              onValueChange={setDarkMode}
+              value={isDarkMode}
+              onValueChange={(value) => {
+                setDarkMode(value);
+              }}
               trackColor={{ false: '#D1D5DB', true: colors.primary }}
-              thumbColor={Platform.OS === 'ios' ? '#FFFFFF' : darkMode ? colors.primary : '#F9FAFB'}
+              thumbColor={Platform.OS === 'ios' ? '#FFFFFF' : isDarkMode ? colors.primary : '#F9FAFB'}
             />
           </View>
         </Card>
@@ -143,27 +164,27 @@ export default function SettingsPage() {
         {/* Advanced Settings */}
         <Card title="Advanced Options">
           <TouchableOpacity 
-            style={styles.navItem} 
+            style={[styles.navItem, dynamicStyles.navItem]} 
             onPress={() => {
               /* Navigate to change password screen */
             }}
           >
             <View style={styles.navItemContent}>
               <Ionicons name="key-outline" size={22} color={colors.text.secondary} />
-              <Text style={styles.navItemText}>Change GSM Relay Password</Text>
+              <Text style={[styles.navItemText, dynamicStyles.navItemText]}>Change GSM Relay Password</Text>
             </View>
             <Ionicons name="chevron-forward" size={22} color={colors.text.secondary} />
           </TouchableOpacity>
 
           <TouchableOpacity 
-            style={styles.navItem} 
+            style={[styles.navItem, dynamicStyles.navItem]} 
             onPress={() => {
               /* Navigate to device management */
             }}
           >
             <View style={styles.navItemContent}>
               <Ionicons name="options-outline" size={22} color={colors.text.secondary} />
-              <Text style={styles.navItemText}>Advanced Device Settings</Text>
+              <Text style={[styles.navItemText, dynamicStyles.navItemText]}>Advanced Device Settings</Text>
             </View>
             <Ionicons name="chevron-forward" size={22} color={colors.text.secondary} />
           </TouchableOpacity>
@@ -172,13 +193,13 @@ export default function SettingsPage() {
         {/* About */}
         <Card title="About">
           <View style={styles.aboutRow}>
-            <Text style={styles.aboutLabel}>App Version</Text>
-            <Text style={styles.aboutValue}>1.0.0</Text>
+            <Text style={[styles.aboutLabel, dynamicStyles.text]}>App Version</Text>
+            <Text style={[styles.aboutValue, { color: colors.text.secondary }]}>1.0.0</Text>
           </View>
           
           <View style={styles.aboutRow}>
-            <Text style={styles.aboutLabel}>Device ID</Text>
-            <Text style={styles.aboutValue}>GSM-Opener-1</Text>
+            <Text style={[styles.aboutLabel, dynamicStyles.text]}>Device ID</Text>
+            <Text style={[styles.aboutValue, { color: colors.text.secondary }]}>GSM-Opener-1</Text>
           </View>
         </Card>
 
@@ -222,10 +243,8 @@ export default function SettingsPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   header: {
-    backgroundColor: colors.surface,
     paddingTop: 50,
     paddingBottom: 12,
     paddingHorizontal: 16,
@@ -234,7 +253,6 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 22,
     fontWeight: '600',
-    color: colors.text.primary,
   },
   content: {
     flex: 1,
@@ -257,11 +275,9 @@ const styles = StyleSheet.create({
   preferenceLabel: {
     fontSize: 16,
     fontWeight: '500',
-    color: colors.text.primary,
   },
   preferenceDescription: {
     fontSize: 14,
-    color: colors.text.secondary,
     marginTop: 2,
   },
   navItem: {
@@ -270,7 +286,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
   },
   navItemContent: {
     flexDirection: 'row',
@@ -278,7 +293,6 @@ const styles = StyleSheet.create({
   },
   navItemText: {
     fontSize: 16,
-    color: colors.text.primary,
     marginLeft: spacing.sm,
   },
   aboutRow: {
@@ -288,11 +302,9 @@ const styles = StyleSheet.create({
   },
   aboutLabel: {
     fontSize: 16,
-    color: colors.text.primary,
   },
   aboutValue: {
     fontSize: 16,
-    color: colors.text.secondary,
   },
   resetButton: {
     marginTop: spacing.md,

@@ -8,6 +8,7 @@ import {
   ViewStyle 
 } from 'react-native';
 import { colors, spacing, shadows, borderRadius } from '../styles/theme';
+import { useTheme } from '../contexts/ThemeContext';
 
 interface CardProps {
   children: React.ReactNode;
@@ -26,8 +27,14 @@ export const Card: React.FC<CardProps> = ({
   style,
   elevated = false,
 }) => {
+  const { colors } = useTheme();
+
   const cardStyles = [
     styles.card,
+    {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+    },
     elevated && styles.elevated,
     style,
   ];
@@ -40,8 +47,8 @@ export const Card: React.FC<CardProps> = ({
       onPress={onPress}
       activeOpacity={onPress ? 0.7 : 1}
     >
-      {title && <Text style={styles.title}>{title}</Text>}
-      {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
+      {title && <Text style={[styles.title, { color: colors.text.primary }]}>{title}</Text>}
+      {subtitle && <Text style={[styles.subtitle, { color: colors.text.secondary }]}>{subtitle}</Text>}
       <View style={styles.content}>
         {children}
       </View>
@@ -51,11 +58,9 @@ export const Card: React.FC<CardProps> = ({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: colors.surface,
     borderRadius: borderRadius.md,
     padding: spacing.md,
     borderWidth: 1,
-    borderColor: colors.border,
     marginBottom: spacing.md,
   },
   elevated: {
@@ -64,15 +69,16 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: '600',
-    color: colors.text.primary,
     marginBottom: spacing.xs,
   },
   subtitle: {
     fontSize: 14,
-    color: colors.text.secondary,
     marginBottom: spacing.sm,
   },
   content: {
     // No specific styles needed, just a container for content
   },
 });
+
+// Add default export for expo-router compatibility
+export default Card;
