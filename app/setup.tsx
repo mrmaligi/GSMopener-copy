@@ -3,14 +3,15 @@ import { StyleSheet, View, Text, ScrollView, Alert, Platform, Linking } from 're
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { StandardHeader } from './components/StandardHeader';
+import { Header } from './components/Header';
 import { Card } from './components/Card';
 import { Button } from './components/Button';
 import { TextInputField } from './components/TextInputField';
 import { colors, spacing, shadows, borderRadius } from './styles/theme';
 import { addLog } from '../utils/logging';
+import { StandardHeader } from './components/StandardHeader';
 
-export default function Step1Page() {
+export default function SetupPage() {
   const router = useRouter();
   const [unitNumber, setUnitNumber] = useState('');
   const [password, setPassword] = useState('1234'); // Default password
@@ -164,7 +165,7 @@ export default function Step1Page() {
 
   return (
     <View style={styles.container}>
-      <StandardHeader showBack backTo="/setup" />
+      <StandardHeader />
       
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         <Card title="Configure Your GSM Opener" elevated>

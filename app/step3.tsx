@@ -3,11 +3,12 @@ import { StyleSheet, View, Text, ScrollView, Alert, Platform, Linking, Touchable
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Header } from './components/Header';
 import { Card } from './components/Card';
 import { Button } from './components/Button';
 import { TextInputField } from './components/TextInputField';
 import { colors, spacing, shadows, borderRadius } from './styles/theme';
+import { addLog } from '../utils/logging';
+import { StandardHeader } from './components/StandardHeader';
 
 interface User {
   phoneNumber: string;
@@ -71,6 +72,7 @@ export default function Step3Page() {
   const sendSMS = async (command: string) => {
     if (!unitNumber) {
       Alert.alert('Error', 'GSM relay number not set. Please configure in Step 1 first.');
+      await addLog('User Management', 'Failed: GSM relay number not set', false);
       return;
     }
 
@@ -93,10 +95,15 @@ export default function Step3Page() {
           'SMS is not available on this device. Please ensure an SMS app is installed.',
           [{ text: 'OK' }]
         );
+        await addLog('User Management', 'Failed: SMS not available on device', false);
         return;
       }
 
       await Linking.openURL(smsUrl);
+      
+      // Log the action with masked password
+      const maskedCommand = command.replace(password, '****');
+      await addLog('User Management', `Command sent: ${maskedCommand}`, true);
     } catch (error) {
       console.error('Failed to send SMS:', error);
       Alert.alert(
@@ -104,6 +111,7 @@ export default function Step3Page() {
         'Failed to open SMS. Please try again.',
         [{ text: 'OK' }]
       );
+      await addLog('User Management', `Error: ${error.message}`, false);
     } finally {
       setIsLoading(false);
     }
@@ -285,7 +293,7 @@ export default function Step3Page() {
 
   return (
     <View style={styles.container}>
-      <Header title="User Management" showBack backTo="/setup" />
+      <StandardHeader showBack backTo="/setup" />
       
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         <Card title="Add Authorized User" elevated>

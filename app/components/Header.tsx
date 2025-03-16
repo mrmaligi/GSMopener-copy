@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
@@ -10,6 +10,7 @@ interface HeaderProps {
   showBack?: boolean;
   backTo?: string;
   rightAction?: React.ReactNode;
+  showLogo?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -17,6 +18,7 @@ export const Header: React.FC<HeaderProps> = ({
   showBack = false,
   backTo = '',
   rightAction,
+  showLogo = true,
 }) => {
   const router = useRouter();
 
@@ -39,13 +41,18 @@ export const Header: React.FC<HeaderProps> = ({
         <View style={styles.placeholder} />
       )}
       
-      <Text style={styles.title} numberOfLines={1}>{title}</Text>
+      <View style={styles.titleContainer}>
+        {showLogo && (
+          <Image 
+            source={require('../../assets/images/logo.png')}
+            style={styles.logo}
+            resizeMode="contain"
+          />
+        )}
+        <Text style={styles.title}>{title}</Text>
+      </View>
       
-      {rightAction ? (
-        <View style={styles.rightAction}>{rightAction}</View>
-      ) : (
-        <View style={styles.placeholder} />
-      )}
+      {rightAction || <View style={styles.placeholder} />}
     </View>
   );
 };
@@ -66,6 +73,12 @@ const styles = StyleSheet.create({
     marginRight: 8,
     borderRadius: 20,
   },
+  titleContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   title: {
     fontSize: 18,
     fontWeight: '600',
@@ -75,6 +88,11 @@ const styles = StyleSheet.create({
   },
   placeholder: {
     width: 40, // To balance the header and center the title
+  },
+  logo: {
+    width: 24,
+    height: 24,
+    marginRight: spacing.xs,
   },
   rightAction: {
     width: 40,

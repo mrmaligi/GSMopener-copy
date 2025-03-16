@@ -3,12 +3,12 @@ import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Platform, Linking
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Header } from './components/Header';
+import { StandardHeader } from './components/StandardHeader';
 import { Card } from './components/Card';
 import { Button } from './components/Button';
 import { TextInputField } from './components/TextInputField';
 import { colors, spacing, shadows, borderRadius } from './styles/theme';
-import { addLog } from './utils/logger';
+import { addLog } from '../utils/logging';
 
 export default function Step4Page() {
   const router = useRouter();
@@ -70,21 +70,50 @@ export default function Step4Page() {
     setIsLoading(true);
     
     try {
+      const formattedUnitNumber = Platform.OS === 'ios' ? unitNumber.replace('+', '') : unitNumber;
       const smsUrl = Platform.select({
-        ios: `sms:${unitNumber.replace('+', '')}&body=${encodeURIComponent(command)}`,
-        android: `sms:${unitNumber}?body=${encodeURIComponent(command)}`,
-        default: `sms:${unitNumber}?body=${encodeURIComponent(command)}`
+        ios: `sms:${formattedUnitNumber}&body=${encodeURIComponent(command)}`,
+        android: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
+        default: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`
       });
+      
+      const supported = await Linking.canOpenURL(smsUrl);
+      if (!supported) {
+        Alert.alert('Error', 'SMS is not available on this device');
+        await addLog('Relay Settings', 'Failed: SMS not available on device', false);
+        setIsLoading(false);
+        return;
+      }
       
       await Linking.openURL(smsUrl);
       
-      // Log the action - mask the password part of the command
-      const logCommand = command.replace(password, '****');
-      await addLog(
-        'Relay Settings', 
-        `Command sent: ${logCommand}`, 
-        true
-      );
+      // Log with specific action and details based on command
+      if (command.includes('AUT')) {
+        await addLog(
+          'Access Control', 
+          'Set relay to allow only authorized callers', 
+          true
+        );
+      } else if (command.includes('ALL')) {
+        await addLog(
+          'Access Control', 
+          'Set relay to allow all callers', 
+          true
+        );
+      } else if (command.includes('GOT')) {
+        const latchTime = relaySettings.latchTime;
+        let details = "";
+        
+        if (latchTime === '000') {
+          details = 'Set relay to momentary mode (pulse)';
+        } else if (latchTime === '999') {
+          details = 'Set relay to toggle mode (stays ON until next call)';
+        } else {
+          details = `Set relay to close for ${parseInt(latchTime)} seconds`;
+        }
+        
+        await addLog('Relay Timing', details, true);
+      }
       
       setIsLoading(false);
     } catch (error) {
@@ -129,7 +158,7 @@ export default function Step4Page() {
 
   return (
     <View style={styles.container}>
-      <Header title="Relay Settings" showBack backTo="/setup" />
+      <StandardHeader showBack backTo="/setup" />
       
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         <View style={styles.infoContainer}>

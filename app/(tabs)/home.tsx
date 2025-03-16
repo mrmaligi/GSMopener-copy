@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, ScrollView, Platform, Linking, TouchableOpacity, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { colors, spacing, shadows } from '../styles/theme';
+import { addLog } from '../../utils/logging';
+import { StandardHeader } from '../components/StandardHeader';
 
 export default function HomePage() {
   const [unitNumber, setUnitNumber] = useState('');
@@ -16,6 +17,41 @@ export default function HomePage() {
   useEffect(() => {
     loadSettings();
   }, []);
+  
+  const handleAddDevice = () => {
+    Alert.alert(
+      'Add New Device',
+      'Select device type to add',
+      [
+        {
+          text: 'Add new Connect4v',
+          onPress: () => handleAddConnect4v()
+        },
+        {
+          text: 'Add new Phonic4v',
+          onPress: () => handleAddPhonic4v()
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        }
+      ]
+    );
+  };
+  
+  const handleAddConnect4v = () => {
+    // Implementation for adding Connect4v device
+    addLog('Device Management', 'Started adding new Connect4v device', true);
+    // Navigate to setup page or show form for Connect4v
+    // This could be expanded based on requirements
+  };
+  
+  const handleAddPhonic4v = () => {
+    // Implementation for adding Phonic4v device
+    addLog('Device Management', 'Started adding new Phonic4v device', true);
+    // Navigate to setup page or show form for Phonic4v
+    // This could be expanded based on requirements
+  };
 
   const loadSettings = async () => {
     try {
@@ -36,6 +72,7 @@ export default function HomePage() {
         'Please set up your device number and password in settings first.',
         [{ text: 'OK' }]
       );
+      await addLog('Home Action', 'Failed: Missing device number or password', false);
       return;
     }
 
@@ -58,10 +95,28 @@ export default function HomePage() {
           'SMS is not available on this device. Please ensure an SMS app is installed.',
           [{ text: 'OK' }]
         );
+        await addLog('Home Action', 'Failed: SMS not available on device', false);
         return;
       }
 
       await Linking.openURL(smsUrl);
+      
+      // Use better action descriptions
+      let actionName = "";
+      let actionDetails = "";
+      
+      if (command.includes('CC')) {
+        actionName = "Gate Open";
+        actionDetails = "Opened gate/activated relay (ON)";
+      } else if (command.includes('DD')) {
+        actionName = "Gate Close";
+        actionDetails = "Closed gate/deactivated relay (OFF)";
+      } else if (command.includes('EE')) {
+        actionName = "Status Check";
+        actionDetails = "Requested device status";
+      }
+      
+      await addLog(actionName, actionDetails, true);
       
       // Record last action
       setLastAction({
@@ -75,6 +130,7 @@ export default function HomePage() {
         'Failed to open SMS. Please try again.',
         [{ text: 'OK' }]
       );
+      await addLog('Home Action', `Error: ${error.message}`, false);
     } finally {
       setIsLoading(false);
     }
@@ -94,12 +150,13 @@ export default function HomePage() {
 
   return (
     <View style={styles.container}>
-      <StatusBar style="dark" />
-
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>GSM Opener</Text>
-      </View>
+      <StandardHeader 
+        rightAction={
+          <TouchableOpacity onPress={handleAddDevice} style={styles.addButton}>
+            <Ionicons name="add" size={28} color={colors.primary} />
+          </TouchableOpacity>
+        }
+      />
 
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         {/* Quick Actions Card */}
@@ -168,23 +225,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  header: {
-    backgroundColor: colors.surface,
-    paddingTop: 50,
-    paddingBottom: 12,
-    paddingHorizontal: 16,
-    ...shadows.sm,
-  },
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: '600',
-    color: colors.text.primary,
-  },
   content: {
     flex: 1,
   },
   contentContainer: {
     padding: spacing.md,
+  },
+  addButton: {
+    padding: 8,
   },
   actionGrid: {
     flexDirection: 'row',

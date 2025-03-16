@@ -42,15 +42,6 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="control"
-        options={{
-          title: 'Control',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="apps-outline" color={color} size={size} />
-          ),
-        }}
-      />
-      <Tabs.Screen
         name="setup"
         options={{
           title: 'Setup',
@@ -63,8 +54,8 @@ export default function TabLayout() {
         name="logs"
         options={{
           title: 'Logs',
-          tabBarIcon: ({ color }) => (
-            <TabBarIcon name="list" color={color} />
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="list-outline" color={color} size={size} />
           ),
         }}
       />

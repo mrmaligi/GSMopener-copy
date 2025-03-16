@@ -1,20 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Alert, Switch, Platform } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, Switch, Platform, Alert, Share } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
-import { Ionicons } from '@expo/vector-icons';
 import { Card } from '../components/Card';
-import { TextInputField } from '../components/TextInputField';
 import { Button } from '../components/Button';
 import { spacing, shadows, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { addLog } from '../utils/logger';
+import { StandardHeader } from '../components/StandardHeader';
 
 export default function SettingsPage() {
-  const [unitNumber, setUnitNumber] = useState('');
-  const [password, setPassword] = useState('');
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
+  const [isCreatingBackup, setIsCreatingBackup] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
   
   // Use theme context
   const { isDarkMode, setDarkMode, colors } = useTheme();
@@ -25,50 +26,135 @@ export default function SettingsPage() {
 
   const loadSettings = async () => {
     try {
-      const storedUnitNumber = await AsyncStorage.getItem('unitNumber');
-      const storedPassword = await AsyncStorage.getItem('password');
       const storedNotifications = await AsyncStorage.getItem('notificationsEnabled');
-
-      if (storedUnitNumber) setUnitNumber(storedUnitNumber);
-      if (storedPassword) setPassword(storedPassword);
       if (storedNotifications) setNotificationsEnabled(storedNotifications === 'true');
     } catch (error) {
       console.error('Failed to load settings:', error);
     }
   };
 
-  const saveSettings = async () => {
-    if (!unitNumber) {
-      Alert.alert('Error', 'Please enter the GSM relay number');
-      return;
-    }
-
-    if (!password || password.length !== 4) {
-      Alert.alert('Error', 'Password must be 4 digits');
-      return;
-    }
-
-    setIsSaving(true);
-
+  const saveNotificationSetting = async (value) => {
+    setNotificationsEnabled(value);
     try {
-      await AsyncStorage.setItem('unitNumber', unitNumber);
-      await AsyncStorage.setItem('password', password);
-      await AsyncStorage.setItem('notificationsEnabled', notificationsEnabled.toString());
-      
-      // Log settings update
-      await addLog(
-        'Settings Update', 
-        `GSM number: ${unitNumber}, Notifications: ${notificationsEnabled ? 'On' : 'Off'}`,
-        true
-      );
-
-      Alert.alert('Success', 'Settings saved successfully');
+      await AsyncStorage.setItem('notificationsEnabled', value.toString());
     } catch (error) {
-      console.error('Failed to save settings:', error);
-      await addLog('Settings Update', `Error: ${error.message}`, false);
-      Alert.alert('Error', 'Failed to save settings. Please try again.');
+      console.error('Failed to save notification setting:', error);
+    }
+  };
+
+  const createBackup = async () => {
+    setIsCreatingBackup(true);
+    try {
+      // Get all keys from AsyncStorage
+      const allKeys = await AsyncStorage.getAllKeys();
+      
+      // Get all data from AsyncStorage
+      const allData = await AsyncStorage.multiGet(allKeys);
+      
+      // Convert data to JSON string with nice formatting
+      const backupData = JSON.stringify(Object.fromEntries(allData), null, 2);
+      
+      // Create a temporary file with the backup data
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const fileName = `gsm-opener-backup-${timestamp}.json`;
+      const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
+      
+      await FileSystem.writeAsStringAsync(fileUri, backupData);
+      
+      // Check if sharing is available
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (isAvailable) {
+        // Share the backup file
+        await Sharing.shareAsync(fileUri, {
+          mimeType: 'application/json',
+          dialogTitle: 'Save GSM Opener Backup',
+          UTI: 'public.json' // For iOS
+        });
+        
+        await addLog('Backup', 'App data backup created and shared as JSON file', true);
+      } else {
+        // Fallback if file sharing isn't available
+        const shareResult = await Share.share({
+          message: backupData,
+          title: 'GSM Opener Backup Data'
+        });
+        
+        if (shareResult.action === Share.sharedAction) {
+          await addLog('Backup', 'App data backup created and shared as text', true);
+        }
+      }
+      
+      Alert.alert('Success', 'Backup created successfully!');
+    } catch (error) {
+      console.error('Failed to create backup:', error);
+      await addLog('Backup', `Error creating backup: ${error.message}`, false);
+      Alert.alert('Error', 'Failed to create backup: ' + error.message);
     } finally {
-      setIsSaving(false);
+      setIsCreatingBackup(false);
+    }
+  };
+
+  const pickBackupFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/json',
+        copyToCacheDirectory: true
+      });
+      
+      if (result.canceled) {
+        return;
+      }
+      
+      // On newer expo-document-picker versions
+      const fileUri = result.assets?.[0]?.uri || result.uri;
+      
+      // Now read the file
+      const fileContent = await FileSystem.readAsStringAsync(fileUri);
+      
+      Alert.alert(
+        'Restore Backup',
+        'Do you want to restore data from this backup file? This will overwrite all current app data.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Restore', onPress: () => restoreFromBackup(fileContent) }
+        ]
+      );
+    } catch (error) {
+      console.error('Error picking file:', error);
+      await addLog('Restore', `Error picking backup file: ${error.message}`, false);
+      Alert.alert('Error', 'Could not read backup file: ' + error.message);
+    }
+  };
+  
+  const restoreFromBackup = async (backupJson) => {
+    setIsRestoring(true);
+    try {
+      let backupData;
+      
+      try {
+        backupData = JSON.parse(backupJson);
+      } catch (error) {
+        throw new Error('Invalid backup file format. Please provide a valid JSON file.');
+      }
+      
+      // Clear all existing data first
+      await AsyncStorage.clear();
+      
+      // Restore all data from backup
+      for (const [key, value] of Object.entries(backupData)) {
+        await AsyncStorage.setItem(key, value.toString());
+      }
+      
+      await addLog('Restore', 'App data restored from backup file', true);
+      Alert.alert('Success', 'Data restored successfully! The app will now reload settings.', [
+        { text: 'OK', onPress: loadSettings }
+      ]);
+    } catch (error) {
+      console.error('Failed to restore backup:', error);
+      await addLog('Restore', `Error restoring backup: ${error.message}`, false);
+      Alert.alert('Error', 'Failed to restore backup: ' + error.message);
+    } finally {
+      setIsRestoring(false);
     }
   };
 
@@ -76,79 +162,28 @@ export default function SettingsPage() {
   const dynamicStyles = {
     container: {
       backgroundColor: colors.background,
-    },
-    header: {
-      backgroundColor: colors.surface,
-    },
-    text: {
-      color: colors.text.primary,
-    },
-    navItem: {
-      borderBottomColor: colors.border,
-    },
-    navItemText: {
-      color: colors.text.primary,
     }
   };
 
   return (
     <View style={[styles.container, dynamicStyles.container]}>
-      <StatusBar style={isDarkMode ? "light" : "dark"} />
-
-      {/* Header */}
-      <View style={[styles.header, dynamicStyles.header]}>
-        <Text style={[styles.headerTitle, dynamicStyles.text]}>Settings</Text>
-      </View>
+      <StandardHeader />
 
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-        {/* Device Settings */}
-        <Card title="Device Settings" elevated>
-          <TextInputField
-            label="GSM Relay Number"
-            value={unitNumber}
-            onChangeText={setUnitNumber}
-            placeholder="Enter GSM relay number"
-            keyboardType="phone-pad"
-            autoComplete="tel"
-          />
-          
-          <TextInputField
-            label="Current Password"
-            value={password}
-            onChangeText={(text) => {
-              // Only allow 4 digits
-              const filtered = text.replace(/[^0-9]/g, '').slice(0, 4);
-              setPassword(filtered);
-            }}
-            placeholder="4-digit password"
-            keyboardType="number-pad"
-            maxLength={4}
-            secureTextEntry
-          />
-
-          <Button
-            title="Save Settings"
-            onPress={saveSettings}
-            loading={isSaving}
-            fullWidth
-            style={styles.saveButton}
-          />
-        </Card>
-
         {/* App Preferences */}
         <Card title="App Preferences">
           <View style={styles.preferenceRow}>
             <View style={styles.preferenceTextContainer}>
               <Text style={[styles.preferenceLabel, dynamicStyles.text]}>Enable Notifications</Text>
               <Text style={[styles.preferenceDescription, { color: colors.text.secondary }]}>
-                Receive alerts when your gate is opened
+                Receive alerts when gate is opened
               </Text>
             </View>
             <Switch
               value={notificationsEnabled}
-              onValueChange={setNotificationsEnabled}
-              trackColor={{ false: '#D1D5DB', true: colors.primary }}
-              thumbColor={Platform.OS === 'ios' ? '#FFFFFF' : notificationsEnabled ? colors.primary : '#F9FAFB'}
+              onValueChange={saveNotificationSetting}
+              trackColor={{ false: '#E5E7EB', true: colors.primary }}
+              thumbColor={Platform.OS === 'ios' ? '#FFFFFF' : isDarkMode ? colors.primary : '#F9FAFB'}
             />
           </View>
 
@@ -156,94 +191,49 @@ export default function SettingsPage() {
             <View style={styles.preferenceTextContainer}>
               <Text style={[styles.preferenceLabel, dynamicStyles.text]}>Dark Mode</Text>
               <Text style={[styles.preferenceDescription, { color: colors.text.secondary }]}>
-                Use dark theme for the app interface
+                Use dark color theme
               </Text>
             </View>
             <Switch
               value={isDarkMode}
-              onValueChange={(value) => {
-                setDarkMode(value);
-              }}
-              trackColor={{ false: '#D1D5DB', true: colors.primary }}
+              onValueChange={setDarkMode}
+              trackColor={{ false: '#E5E7EB', true: colors.primary }}
               thumbColor={Platform.OS === 'ios' ? '#FFFFFF' : isDarkMode ? colors.primary : '#F9FAFB'}
             />
           </View>
         </Card>
 
-        {/* Advanced Settings */}
-        <Card title="Advanced Options">
-          <TouchableOpacity 
-            style={[styles.navItem, dynamicStyles.navItem]} 
-            onPress={() => {
-              /* Navigate to change password screen */
-            }}
-          >
-            <View style={styles.navItemContent}>
-              <Ionicons name="key-outline" size={22} color={colors.text.secondary} />
-              <Text style={[styles.navItemText, dynamicStyles.navItemText]}>Change GSM Relay Password</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={22} color={colors.text.secondary} />
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={[styles.navItem, dynamicStyles.navItem]} 
-            onPress={() => {
-              /* Navigate to device management */
-            }}
-          >
-            <View style={styles.navItemContent}>
-              <Ionicons name="options-outline" size={22} color={colors.text.secondary} />
-              <Text style={[styles.navItemText, dynamicStyles.navItemText]}>Advanced Device Settings</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={22} color={colors.text.secondary} />
-          </TouchableOpacity>
-        </Card>
-
-        {/* About */}
-        <Card title="About">
-          <View style={styles.aboutRow}>
-            <Text style={[styles.aboutLabel, dynamicStyles.text]}>App Version</Text>
-            <Text style={[styles.aboutValue, { color: colors.text.secondary }]}>1.0.0</Text>
-          </View>
-          
-          <View style={styles.aboutRow}>
-            <Text style={[styles.aboutLabel, dynamicStyles.text]}>Device ID</Text>
-            <Text style={[styles.aboutValue, { color: colors.text.secondary }]}>GSM-Opener-1</Text>
+        {/* Backup & Restore Section */}
+        <Card title="Data Management">
+          <Text style={[styles.backupDescription, { color: colors.text.secondary }]}>
+            Create a backup of all app data as a JSON file that you can save and use later to restore your settings if needed.
+          </Text>
+          <View style={styles.buttonContainer}>
+            <Button
+              title="Create Backup File"
+              onPress={() => {
+                Alert.alert(
+                  'Create Backup',
+                  'This will create a JSON backup file with all your app data. Continue?',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Create Backup', onPress: createBackup }
+                  ]
+                );
+              }}
+              loading={isCreatingBackup}
+              style={styles.actionButton}
+            />
+            
+            <Button
+              title="Restore from JSON File"
+              onPress={pickBackupFile}
+              loading={isRestoring}
+              variant="outline"
+              style={styles.actionButton}
+            />
           </View>
         </Card>
-
-        {/* Reset Button */}
-        <Button
-          title="Reset All Settings"
-          variant="outline"
-          onPress={() => {
-            Alert.alert(
-              'Reset Settings',
-              'Are you sure you want to reset all settings? This cannot be undone.',
-              [
-                { text: 'Cancel', style: 'cancel' },
-                { 
-                  text: 'Reset', 
-                  style: 'destructive',
-                  onPress: async () => {
-                    try {
-                      await AsyncStorage.clear();
-                      setUnitNumber('');
-                      setPassword('');
-                      setNotificationsEnabled(false);
-                      setDarkMode(false);
-                      Alert.alert('Success', 'All settings have been reset');
-                    } catch (error) {
-                      console.error('Failed to reset settings:', error);
-                      Alert.alert('Error', 'Failed to reset settings');
-                    }
-                  }
-                },
-              ]
-            );
-          }}
-          style={styles.resetButton}
-        />
       </ScrollView>
     </View>
   );
@@ -253,24 +243,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  header: {
-    paddingTop: 50,
-    paddingBottom: 12,
-    paddingHorizontal: 16,
-    ...shadows.sm,
-  },
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: '600',
-  },
   content: {
     flex: 1,
   },
   contentContainer: {
     padding: spacing.md,
-  },
-  saveButton: {
-    marginTop: spacing.sm,
+    paddingBottom: spacing.xl * 2,
   },
   preferenceRow: {
     flexDirection: 'row',
@@ -280,43 +258,24 @@ const styles = StyleSheet.create({
   },
   preferenceTextContainer: {
     flex: 1,
+    marginRight: spacing.md,
   },
   preferenceLabel: {
     fontSize: 16,
     fontWeight: '500',
+    marginBottom: 4,
   },
   preferenceDescription: {
     fontSize: 14,
-    marginTop: 2,
   },
-  navItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
+  backupDescription: {
+    fontSize: 14,
+    marginBottom: spacing.md,
   },
-  navItemContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  buttonContainer: {
+    marginTop: spacing.sm,
   },
-  navItemText: {
-    fontSize: 16,
-    marginLeft: spacing.sm,
-  },
-  aboutRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: spacing.xs,
-  },
-  aboutLabel: {
-    fontSize: 16,
-  },
-  aboutValue: {
-    fontSize: 16,
-  },
-  resetButton: {
-    marginTop: spacing.md,
-    marginBottom: spacing.xl,
-  },
+  actionButton: {
+    marginBottom: spacing.sm,
+  }
 });

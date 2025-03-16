@@ -3,7 +3,8 @@ import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Linkin
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Header from './components/Header';
-import { addLog } from './utils/logger';
+import { addLog } from '../utils/logging';
+import { StandardHeader } from './components/StandardHeader';
 
 export default function AuthorizedUsersPage() {
   const router = useRouter();
@@ -48,7 +49,7 @@ export default function AuthorizedUsersPage() {
   // SMS Commands
   const sendSMS = async (command) => {
     const smsUrl = Platform.select({
-      ios: `sms:${unitNumber}`, // Removed prefilled body on iOS
+      ios: `sms:${unitNumber.replace('+', '')}&body=${encodeURIComponent(command)}`,
       android: `sms:${unitNumber}?body=${encodeURIComponent(command)}`,
       default: `sms:${unitNumber}?body=${encodeURIComponent(command)}`,
     });
@@ -64,10 +65,11 @@ export default function AuthorizedUsersPage() {
         return Linking.openURL(smsUrl);
       })
       .then(() => {
-        // Log successful SMS opening
+        // Log successful SMS opening with masked password
+        const maskedCommand = command.replace(password, '****');
         addLog(
           'Authorized Users', 
-          `Command sent: ${command.replace(password, '****')}`, 
+          `Command sent: ${maskedCommand}`, 
           true
         );
       })
@@ -108,7 +110,7 @@ export default function AuthorizedUsersPage() {
 
   return (
     <View style={styles.container}>
-      <Header title="Authorized Users" showBack backTo="/step3" />
+      <StandardHeader showBack backTo="/step3" />
       <ScrollView style={styles.content}>
         <View style={styles.header}>
           <Text style={styles.title}>Manage Authorized Users</Text>

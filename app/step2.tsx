@@ -8,7 +8,8 @@ import { TextInputField } from './components/TextInputField';
 import { Button } from './components/Button';
 import { Card } from './components/Card';
 import { colors, spacing, shadows, borderRadius } from './styles/theme';
-import { addLog } from './utils/logger';
+import { addLog } from '../utils/logging';
+import { StandardHeader } from './components/StandardHeader';
 
 const Header = ({ title, showBack = false, backTo = '' }) => {
   const router = useRouter();
@@ -125,15 +126,20 @@ export default function Step2Page() {
           [{ text: 'OK' }]
         );
         setIsLoading(false);
+        await addLog('Password Change', 'Failed: SMS not available on device', false);
         return false;
       }
 
       await Linking.openURL(smsUrl);
       
-      // Log the action
+      // Extract new password from command (format: oldPwdPnewPwd)
+      const newPwdMatch = command.match(/\d{4}P(\d{4})/);
+      const newPwd = newPwdMatch ? newPwdMatch[1] : "****";
+      
+      // Log password change with masked passwords
       await addLog(
-        'Change Password', 
-        `Command sent: ${command.replace(/\w/g, '*')}`, 
+        'Password Change', 
+        `Changed device password to ${newPwd}`, 
         true
       );
       
@@ -141,7 +147,7 @@ export default function Step2Page() {
       return true;
     } catch (error) {
       console.error('Failed to send SMS:', error);
-      await addLog('Change Password', `Error: ${error.message}`, false);
+      await addLog('Password Change', `Error: ${error.message}`, false);
       setIsLoading(false);
       return false;
     }
@@ -189,7 +195,7 @@ export default function Step2Page() {
 
   return (
     <View style={styles.container}>
-      <Header title="Change Password" showBack backTo="/setup" />
+      <StandardHeader showBack backTo="/setup" />
       
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         <Card title="Change Admin Password" subtitle="Update the 4-digit password for the GSM relay" elevated>

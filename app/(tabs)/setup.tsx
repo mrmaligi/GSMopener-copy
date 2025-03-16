@@ -3,9 +3,8 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'rea
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
-import { StatusBar } from 'expo-status-bar';
+import { StandardHeader } from '../components/StandardHeader';
 import { Card } from '../components/Card';
-import { Header } from '../components/Header';
 import { colors, spacing, shadows, borderRadius } from '../styles/theme';
 
 type SetupStep = {
@@ -98,7 +97,7 @@ export default function SetupPage() {
 
   return (
     <View style={styles.container}>
-      <Header title="Device Setup" />
+      <StandardHeader />
       
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         <Card title="Device Configuration" subtitle="Follow these steps to set up your GSM relay" elevated>
