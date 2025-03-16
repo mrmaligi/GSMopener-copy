@@ -1,30 +1,34 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Header } from './components/Header';
-import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { StandardHeader } from './components/StandardHeader';
+import { useDevices, User } from './contexts/DeviceContext';
+import { useTheme } from './contexts/ThemeContext';
+import { colors, spacing, borderRadius } from './styles/theme';
+import { mapIoniconName } from './utils/iconMapping';
+import { useAuthorizedUsers } from './hooks/useAuthorizedUsers';
 
 export default function AuthorizedUsersList() {
-  const [authorizedUsers, setAuthorizedUsers] = useState([]);
   const router = useRouter();
-
-  const loadAuthorizedUsers = async () => {
-    try {
-      const savedUsers = await AsyncStorage.getItem('authorizedUsers');
-      if (savedUsers) {
-        setAuthorizedUsers(JSON.parse(savedUsers));
-      }
-    } catch (error) {
-      console.error('Error loading authorized users', error);
+  const params = useLocalSearchParams();
+  const { colors } = useTheme();
+  const { activeDevice } = useDevices();
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  
+  // Determine which device's users to load
+  useEffect(() => {
+    if (params.deviceId) {
+      setDeviceId(String(params.deviceId));
+    } else if (activeDevice) {
+      setDeviceId(activeDevice.id);
+    } else {
+      setDeviceId(null);
     }
-  };
+  }, [params.deviceId, activeDevice]);
 
-  useFocusEffect(
-    React.useCallback(() => {
-      loadAuthorizedUsers();
-    }, [])
-  );
+  // Use the hook with the current device ID
+  const { users: authorizedUsers, isLoading } = useAuthorizedUsers(deviceId || undefined);
 
   // Helper function to format date/time
   const formatAccessTime = (timeString) => {
@@ -52,62 +56,85 @@ export default function AuthorizedUsersList() {
 
   return (
     <View style={styles.container}>
-      <Header title="Authorized Users List" showBack backTo="/step3" />
-      <ScrollView style={styles.content}>
-        <View style={styles.infoCard}>
-          <Text style={styles.infoTitle}>Authorized Users Management</Text>
-          <Text style={styles.infoText}>
-            • Authorized numbers can dial the device to control the relay{'\n'}
-            • Each user is stored in a position from 001-200{'\n'}
-            • Access times can be set to restrict when users can operate the device
-          </Text>
+      <StandardHeader showBack backTo="/step3" title="Authorized Users" />
+      
+      <View style={styles.deviceBanner}>
+        <Text style={styles.deviceInfo}>
+          {activeDevice 
+            ? `Device: ${activeDevice.name}`
+            : 'No device selected'}
+        </Text>
+      </View>
+      
+      {isLoading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>Loading users...</Text>
         </View>
-        
-        {authorizedUsers.length === 0 ? (
-          <Text style={styles.noUserText}>No authorized users found.</Text>
-        ) : (
-          authorizedUsers.map((user, index) => (
-            <View key={index} style={styles.userCard}>
-              <View style={styles.userHeader}>
-                <Text style={styles.userTitle}>{user.name || `User ${index + 1}`}</Text>
-                <Text style={styles.userSerial}>#{user.serialNumber || user.id || (index + 1).toString().padStart(3, '0')}</Text>
-              </View>
-              
-              <View style={styles.userDetails}>
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Phone:</Text>
-                  <Text style={styles.detailValue}>{user.phoneNumber || user.phone || 'N/A'}</Text>
+      ) : (
+        <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+          <View style={styles.infoCard}>
+            <Ionicons name={mapIoniconName("information-circle-outline")} size={24} color={colors.primary} style={styles.infoIcon} />
+            <Text style={styles.infoText}>
+              Authorized numbers can dial the device to control the relay. Each user is stored in a position from 001-200.
+            </Text>
+          </View>
+          
+          {authorizedUsers.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Ionicons name={mapIoniconName("person-outline")} size={60} color={colors.text.disabled} />
+              <Text style={styles.emptyText}>No authorized users found</Text>
+            </View>
+          ) : (
+            authorizedUsers.map((user, index) => (
+              <View 
+                key={`userlist_${deviceId}_${index}_${user.serialNumber || Math.random()}`}
+                style={styles.userCard}
+              >
+                <View style={styles.userHeader}>
+                  <Text style={styles.userName}>{user.name || `User ${index + 1}`}</Text>
+                  <Text style={styles.userSerial}>#{user.serialNumber || (index + 1).toString().padStart(3, '0')}</Text>
                 </View>
                 
-                {(user.startTime && user.endTime) ? (
+                <View style={styles.userDetails}>
                   <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Access Period:</Text>
-                    <View style={styles.accessTimes}>
-                      <Text style={styles.detailValue}>
-                        {formatAccessTime(user.startTime)} - {formatAccessTime(user.endTime)}
-                      </Text>
-                      <Text style={styles.timeFormat}>
-                        Format: {user.startTime} - {user.endTime}
-                      </Text>
+                    <Text style={styles.detailLabel}>Phone:</Text>
+                    <Text style={styles.detailValue}>{user.phoneNumber || 'N/A'}</Text>
+                  </View>
+                  
+                  {(user.startTime && user.endTime) ? (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Access:</Text>
+                      <View style={styles.accessTimes}>
+                        <Text style={styles.detailValue}>
+                          {formatAccessTime(user.startTime)} - {formatAccessTime(user.endTime)}
+                        </Text>
+                        <Text style={styles.timeFormat}>
+                          Format: {user.startTime} - {user.endTime}
+                        </Text>
+                      </View>
                     </View>
-                  </View>
-                ) : (
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Access:</Text>
-                    <Text style={styles.detailValue}>Unlimited (No time restrictions)</Text>
-                  </View>
-                )}
+                  ) : (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Access:</Text>
+                      <Text style={styles.detailValue}>Unlimited (No time restrictions)</Text>
+                    </View>
+                  )}
+                </View>
               </View>
-            </View>
-          ))
-        )}
-      </ScrollView>
+            ))
+          )}
+        </ScrollView>
+      )}
       
       <TouchableOpacity 
         style={styles.floatingButton}
-        onPress={() => router.push('/step3')}
+        onPress={() => router.push({
+          pathname: '/step3',
+          params: deviceId ? { deviceId } : {}
+        })}
       >
-        <Ionicons name="person-add-outline" size={20} color="white" style={styles.buttonIcon} />
+        <Ionicons name={mapIoniconName("person-add-outline")} size={20} color="white" style={styles.buttonIcon} />
         <Text style={styles.buttonText}>Add New User</Text>
       </TouchableOpacity>
     </View>
@@ -117,89 +144,90 @@ export default function AuthorizedUsersList() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'white',
+    backgroundColor: colors.background,
+  },
+  deviceBanner: {
+    backgroundColor: colors.surfaceVariant,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  deviceInfo: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    textAlign: 'center',
   },
   content: {
-    padding: 16,
-    paddingBottom: 80, // Add padding to avoid floating button overlap
+    flex: 1,
   },
-  noUserText: {
-    fontSize: 16,
-    textAlign: 'center',
-    marginTop: 20,
+  contentContainer: {
+    padding: spacing.md,
+    paddingBottom: 80, // For floating button
   },
-  userCard: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
-  },
-  userTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  userDetail: {
-    fontSize: 16,
-    color: '#333',
-  },
-  floatingButton: {
-    position: 'absolute',
-    bottom: 20,
-    right: 20,
-    backgroundColor: '#2196F3',
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    flexDirection: 'row',
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  buttonIcon: {
-    marginRight: 8,
-  },
-  buttonText: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 16,
+  loadingText: {
+    marginTop: spacing.md,
+    color: colors.text.secondary,
   },
   infoCard: {
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: '#2196F3',
+    flexDirection: 'row',
+    backgroundColor: `${colors.primary}10`,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    alignItems: 'center',
   },
-  infoTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginBottom: 8,
+  infoIcon: {
+    marginRight: spacing.sm,
   },
   infoText: {
+    flex: 1,
     fontSize: 14,
+    color: colors.text.secondary,
     lineHeight: 20,
-    color: '#555',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.xl * 2,
+  },
+  emptyText: {
+    marginTop: spacing.md,
+    fontSize: 16,
+    color: colors.text.secondary,
+  },
+  userCard: {
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    marginBottom: spacing.md,
   },
   userHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: spacing.sm,
+  },
+  userName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text.primary,
   },
   userSerial: {
-    backgroundColor: '#f0f0f0',
+    backgroundColor: `${colors.primary}15`,
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 20,
+    borderRadius: 12,
     fontSize: 14,
     fontWeight: '500',
-    color: '#555',
+    color: colors.primary,
   },
   userDetails: {
     marginTop: 4,
@@ -209,22 +237,46 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   detailLabel: {
-    fontSize: 16,
-    color: '#555',
-    width: 80,
+    fontSize: 14,
+    color: colors.text.secondary,
+    width: 60,
   },
   detailValue: {
-    fontSize: 16,
+    fontSize: 14,
     flex: 1,
-    color: '#333',
+    color: colors.text.primary,
   },
   accessTimes: {
     flex: 1,
   },
   timeFormat: {
     fontSize: 12,
-    color: '#777',
+    color: colors.text.disabled,
     fontStyle: 'italic',
     marginTop: 2,
+  },
+  floatingButton: {
+    position: 'absolute',
+    bottom: spacing.md,
+    right: spacing.md,
+    backgroundColor: colors.primary,
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  buttonIcon: {
+    marginRight: spacing.xs,
+  },
+  buttonText: {
+    color: 'white',
+    fontWeight: '600',
+    fontSize: 16,
   },
 });

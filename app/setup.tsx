@@ -1,28 +1,56 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, ScrollView, Alert, Platform, Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Header } from './components/Header';
 import { Card } from './components/Card';
 import { Button } from './components/Button';
 import { TextInputField } from './components/TextInputField';
 import { colors, spacing, shadows, borderRadius } from './styles/theme';
 import { addLog } from '../utils/logging';
 import { StandardHeader } from './components/StandardHeader';
+import { DeviceData } from '../types/devices';
+import { getDevices, updateDevice } from '../utils/deviceStorage';
+import { useDevices } from './contexts/DeviceContext';
 
 export default function SetupPage() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const { refreshDevices } = useDevices();
   const [unitNumber, setUnitNumber] = useState('');
   const [password, setPassword] = useState('1234'); // Default password
   const [adminNumber, setAdminNumber] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [device, setDevice] = useState<DeviceData | null>(null);
   
+  // Load device data if deviceId is provided
   useEffect(() => {
-    loadData();
-  }, []);
+    if (params.deviceId) {
+      loadDeviceData(String(params.deviceId));
+    } else {
+      loadLegacyData();
+    }
+  }, [params.deviceId]);
 
-  const loadData = async () => {
+  const loadDeviceData = async (deviceId: string) => {
+    try {
+      const devices = await getDevices();
+      const foundDevice = devices.find(d => d.id === deviceId);
+      
+      if (foundDevice) {
+        setDevice(foundDevice);
+        setUnitNumber(foundDevice.unitNumber);
+        setPassword(foundDevice.password);
+        // Admin number might be stored separately
+        const savedAdminNumber = await AsyncStorage.getItem('adminNumber');
+        if (savedAdminNumber) setAdminNumber(savedAdminNumber);
+      }
+    } catch (error) {
+      console.error('Error loading device data:', error);
+    }
+  };
+
+  const loadLegacyData = async () => {
     try {
       const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
       const savedPassword = await AsyncStorage.getItem('password');
@@ -38,8 +66,21 @@ export default function SetupPage() {
 
   const saveToLocalStorage = async () => {
     try {
-      await AsyncStorage.setItem('unitNumber', unitNumber);
-      await AsyncStorage.setItem('password', password);
+      // If we have a device, update it
+      if (device) {
+        const updatedDevice = {
+          ...device,
+          unitNumber,
+          password
+        };
+        await updateDevice(updatedDevice);
+        await refreshDevices();
+      } else {
+        // Otherwise use legacy storage
+        await AsyncStorage.setItem('unitNumber', unitNumber);
+        await AsyncStorage.setItem('password', password);
+      }
+      
       await AsyncStorage.setItem('adminNumber', adminNumber);
       
       // Mark step as completed

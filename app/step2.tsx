@@ -1,87 +1,83 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, ScrollView, Platform, Linking, Alert, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, Alert, Platform, Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
-import { TextInputField } from './components/TextInputField';
-import { Button } from './components/Button';
+import { StandardHeader } from './components/StandardHeader';
 import { Card } from './components/Card';
+import { Button } from './components/Button';
+import { TextInputField } from './components/TextInputField';
 import { colors, spacing, shadows, borderRadius } from './styles/theme';
 import { addLog } from '../utils/logging';
-import { StandardHeader } from './components/StandardHeader';
-
-const Header = ({ title, showBack = false, backTo = '' }) => {
-  const router = useRouter();
-  return (
-    <View style={headerStyles.container}>
-      <StatusBar style="dark" />
-      {showBack && (
-        <TouchableOpacity style={headerStyles.backButton} onPress={() => router.push(backTo)}>
-          <Ionicons name="arrow-back" size={24} color={colors.text.primary} />
-        </TouchableOpacity>
-      )}
-      <Text style={headerStyles.title}>{title}</Text>
-      <View style={headerStyles.placeholder} />
-    </View>
-  );
-};
-
-const headerStyles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.surface,
-    paddingTop: 50,
-    paddingBottom: 12,
-    paddingHorizontal: 16,
-    ...shadows.sm,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.text.primary,
-    flex: 1,
-    textAlign: 'center',
-  },
-  backButton: {
-    padding: 8,
-    marginRight: 8,
-    borderRadius: borderRadius.md,
-  },
-  placeholder: {
-    width: 40, // To balance the back button and center the title
-  },
-});
+import { useDevices } from './contexts/DeviceContext';
+import { DeviceData } from '../types/devices';
+import { getDevices, updateDevice } from '../utils/deviceStorage';
+import { mapIoniconName } from './utils/iconMapping';
 
 export default function Step2Page() {
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  const { activeDevice, refreshDevices } = useDevices();
+  const [device, setDevice] = useState<DeviceData | null>(null);
   const [unitNumber, setUnitNumber] = useState('');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const router = useRouter();
 
+  // Load data based on device context or params
   useEffect(() => {
-    loadSettings();
-  }, []);
+    if (params.deviceId) {
+      loadDeviceById(String(params.deviceId));
+    } else if (activeDevice) {
+      setDevice(activeDevice);
+      setUnitNumber(activeDevice.unitNumber);
+      setPassword(activeDevice.password);
+    } else {
+      loadLegacySettings();
+    }
+  }, [params.deviceId, activeDevice]);
 
-  const loadSettings = async () => {
+  const loadDeviceById = async (deviceId: string) => {
     try {
-      const storedUnitNumber = await AsyncStorage.getItem('unitNumber');
-      const storedPassword = await AsyncStorage.getItem('password');
+      const devices = await getDevices();
+      const foundDevice = devices.find(d => d.id === deviceId);
+      
+      if (foundDevice) {
+        setDevice(foundDevice);
+        setUnitNumber(foundDevice.unitNumber);
+        setPassword(foundDevice.password);
+      }
+    } catch (error) {
+      console.error('Failed to load device:', error);
+    }
+  };
 
-      if (storedUnitNumber) setUnitNumber(storedUnitNumber);
-      if (storedPassword) setPassword(storedPassword);
+  const loadLegacySettings = async () => {
+    try {
+      const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
+      const savedPassword = await AsyncStorage.getItem('password');
+
+      if (savedUnitNumber) setUnitNumber(savedUnitNumber);
+      if (savedPassword) setPassword(savedPassword);
     } catch (error) {
       console.error('Failed to load settings:', error);
     }
   };
 
-  const saveToLocalStorage = async (newPass) => {
+  const saveToLocalStorage = async (newPwd: string): Promise<boolean> => {
     try {
-      await AsyncStorage.setItem('password', newPass);
+      // Update device if available, otherwise use legacy storage
+      if (device) {
+        const updatedDevice = {
+          ...device,
+          password: newPwd
+        };
+        await updateDevice(updatedDevice);
+        await refreshDevices();
+      } else {
+        await AsyncStorage.setItem('password', newPwd);
+      }
       
       // Mark step as completed
       const savedCompletedSteps = await AsyncStorage.getItem('completedSteps');
@@ -94,7 +90,7 @@ export default function Step2Page() {
       
       return true;
     } catch (error) {
-      console.error('Failed to save new password:', error);
+      console.error('Failed to save settings:', error);
       return false;
     }
   };
@@ -200,7 +196,7 @@ export default function Step2Page() {
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         <Card title="Change Admin Password" subtitle="Update the 4-digit password for the GSM relay" elevated>
           <View style={styles.infoContainer}>
-            <Ionicons name="information-circle-outline" size={24} color={colors.primary} style={styles.infoIcon} />
+            <Ionicons name={mapIoniconName("information-circle-outline")} size={24} color={colors.primary} style={styles.infoIcon} />
             <Text style={styles.infoText}>
               This will change the password on your GSM relay device. Make sure to remember your new password.
             </Text>

@@ -123,3 +123,6 @@ export const navigationTheme = {
     },
   },
 };
+
+// Add a default export for the theme
+export default colors;

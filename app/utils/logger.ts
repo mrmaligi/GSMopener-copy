@@ -70,3 +70,11 @@ export const logGateOperation = async (operation: 'Open' | 'Close', success: boo
   const actionDetails = details || `Gate ${operation.toLowerCase()} command sent`;
   await addLog(`Gate ${operation}`, actionDetails, success);
 };
+
+// Export default for expo-router compatibility
+export default {
+  addLog,
+  getLogs,
+  clearLogs,
+  logGateOperation
+};

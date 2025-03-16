@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { StandardHeader } from '../components/StandardHeader';
 import { Card } from '../components/Card';
 import { colors, spacing, shadows, borderRadius } from '../styles/theme';
+import { useDevices } from '../contexts/DeviceContext';
 
 type SetupStep = {
   id: string;
@@ -17,22 +18,18 @@ type SetupStep = {
 
 export default function SetupPage() {
   const router = useRouter();
-  const [unitNumber, setUnitNumber] = useState('');
-  const [password, setPassword] = useState('');
+  const params = useLocalSearchParams();
+  const { activeDevice } = useDevices();
   const [completedSteps, setCompletedSteps] = useState<string[]>([]);
 
+  // Load completed steps on mount or when active device changes
   useEffect(() => {
     loadData();
-  }, []);
+  }, [activeDevice]);
 
   const loadData = async () => {
     try {
-      const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
-      const savedPassword = await AsyncStorage.getItem('password');
       const savedCompletedSteps = await AsyncStorage.getItem('completedSteps');
-
-      if (savedUnitNumber) setUnitNumber(savedUnitNumber);
-      if (savedPassword) setPassword(savedPassword);
       if (savedCompletedSteps) setCompletedSteps(JSON.parse(savedCompletedSteps));
     } catch (error) {
       console.error('Error loading data:', error);
@@ -83,16 +80,19 @@ export default function SetupPage() {
   ];
 
   const navigateToStep = (step: SetupStep) => {
-    if (step.id !== 'step1' && !unitNumber) {
+    if (!activeDevice && step.id !== 'step1') {
       Alert.alert(
         'Setup Required',
-        'Please complete the initial setup first to configure your device number.',
+        'Please complete the initial setup first to configure your device.',
         [{ text: 'OK' }]
       );
       return;
     }
     
-    router.push(step.route);
+    router.push({
+      pathname: step.route,
+      params: activeDevice ? { deviceId: activeDevice.id } : {}
+    });
   };
 
   return (
@@ -104,9 +104,19 @@ export default function SetupPage() {
           <View style={styles.setupStatus}>
             <View style={styles.deviceInfoContainer}>
               <Ionicons name="phone-portrait-outline" size={24} color={colors.primary} />
-              <Text style={styles.deviceInfoLabel}>Device Number:</Text>
-              <Text style={styles.deviceInfoValue}>{unitNumber || 'Not configured'}</Text>
+              <Text style={styles.deviceInfoLabel}>Device:</Text>
+              <Text style={styles.deviceInfoValue}>
+                {activeDevice ? activeDevice.name : 'Not configured'}
+              </Text>
             </View>
+            
+            {activeDevice && (
+              <View style={styles.deviceInfoContainer}>
+                <Ionicons name="call-outline" size={24} color={colors.primary} />
+                <Text style={styles.deviceInfoLabel}>Number:</Text>
+                <Text style={styles.deviceInfoValue}>{activeDevice.unitNumber}</Text>
+              </View>
+            )}
           </View>
         </Card>
         
@@ -132,7 +142,11 @@ export default function SetupPage() {
                 </View>
                 
                 <View style={styles.stepIndicator}>
-                  <Ionicons name="chevron-forward" size={24} color={colors.text.secondary} />
+                  {completedSteps.includes(step.id) ? (
+                    <Ionicons name="checkmark-circle" size={24} color={colors.success} />
+                  ) : (
+                    <Ionicons name="chevron-forward" size={24} color={colors.text.secondary} />
+                  )}
                 </View>
               </View>
             </Card>

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, ScrollView, Switch, Platform, Alert, Share } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, Switch, Platform, Alert, Share, TouchableOpacity } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
+import { useRouter } from 'expo-router';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { spacing, shadows, borderRadius } from '../styles/theme';
@@ -11,18 +12,36 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { addLog } from '../utils/logger';
 import { StandardHeader } from '../components/StandardHeader';
+import { Ionicons } from '@expo/vector-icons';
+import { useDevices } from '../contexts/DeviceContext';
+import { mapIoniconName } from '../utils/iconMapping';
+
+// Define a device interface
+interface Device {
+  id: string;
+  name: string;
+  unitNumber: string;
+  type: string;
+}
 
 export default function SettingsPage() {
+  const router = useRouter();
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [isCreatingBackup, setIsCreatingBackup] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [devices, setDevices] = useState<Device[]>([]);
   
-  // Use theme context
+  // Use theme context and devices context
   const { isDarkMode, setDarkMode, colors } = useTheme();
+  const { devices: deviceList, activeDevice, setActiveDeviceById, refreshDevices } = useDevices();
 
   useEffect(() => {
     loadSettings();
-  }, []);
+    // Set devices from the DeviceContext
+    if (deviceList) {
+      setDevices(deviceList);
+    }
+  }, [deviceList]);
 
   const loadSettings = async () => {
     try {
@@ -42,6 +61,33 @@ export default function SettingsPage() {
     }
   };
 
+  // Device Management Functions
+  const handleAddDevice = () => {
+    router.push('/device-add');
+  };
+
+  const handleEditDevice = (deviceId: string) => {
+    router.push({
+      pathname: '/device-edit',
+      params: { deviceId }
+    });
+  };
+
+  const handleSetActiveDevice = async (deviceId: string) => {
+    try {
+      await setActiveDeviceById(deviceId);
+      Alert.alert('Success', 'Active device changed successfully');
+    } catch (error) {
+      console.error('Failed to change active device:', error);
+      Alert.alert('Error', 'Failed to change active device');
+    }
+  };
+
+  const handleManageDevices = () => {
+    router.push('/devices');
+  };
+
+  // Backup and restore functions
   const createBackup = async () => {
     setIsCreatingBackup(true);
     try {
@@ -170,6 +216,45 @@ export default function SettingsPage() {
       <StandardHeader />
 
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+        {/* Device Management Card */}
+        <Card title="Device Management" subtitle="Manage your connected devices">
+          <View style={styles.deviceList}>
+            {devices.length === 0 ? (
+              <Text style={styles.emptyMessage}>No devices configured</Text>
+            ) : (
+              devices.map(device => (
+                <View key={device.id} style={styles.deviceItem}>
+                  <View style={styles.deviceInfo}>
+                    <View style={styles.deviceIcon}>
+                      <Ionicons 
+                        name={device.type === 'Connect4v' ? 'hardware-chip' : 'musical-note'} 
+                        size={20} 
+                        color={colors.primary} 
+                      />
+                    </View>
+                    <View style={styles.deviceDetails}>
+                      <Text style={styles.deviceName}>{device.name}</Text>
+                      <Text style={styles.deviceType}>{device.type} • {device.phoneNumber}</Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity 
+                    style={styles.removeButton}
+                    onPress={() => removeDevice(device.id)}
+                  >
+                    <Ionicons name="trash-outline" size={20} color={colors.error} />
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+          </View>
+          <Button 
+            title="Add Device" 
+            icon="add-circle" 
+            onPress={handleAddDevice} 
+            style={styles.addDeviceButton}
+          />
+        </Card>
+
         {/* App Preferences */}
         <Card title="App Preferences">
           <View style={styles.preferenceRow}>
@@ -277,5 +362,53 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     marginBottom: spacing.sm,
-  }
+  },
+  deviceList: {
+    marginBottom: spacing.sm,
+  },
+  deviceItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.1)',
+  },
+  deviceInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  deviceIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  deviceDetails: {
+    flex: 1,
+  },
+  deviceName: {
+    fontSize: 16,
+    fontWeight: '500',
+    marginBottom: 2,
+  },
+  deviceType: {
+    fontSize: 14,
+    color: 'rgba(0,0,0,0.6)',
+  },
+  removeButton: {
+    padding: 8,
+  },
+  emptyMessage: {
+    textAlign: 'center',
+    padding: 16,
+    color: 'rgba(0,0,0,0.5)',
+  },
+  addDeviceButton: {
+    marginTop: spacing.sm,
+  },
 });

@@ -1,71 +1,90 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, ScrollView, Alert, Platform, Linking, TouchableOpacity, TextInput, Clipboard } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Card } from './components/Card';
 import { Button } from './components/Button';
 import { TextInputField } from './components/TextInputField';
-import { colors, spacing, shadows, borderRadius } from './styles/theme';
+import { colors, spacing, borderRadius } from './styles/theme';
 import { addLog } from '../utils/logging';
 import { StandardHeader } from './components/StandardHeader';
+import { useDevices } from './contexts/DeviceContext';
+import { DeviceData } from '../types/devices';
+import { getDevices, updateDevice } from '../utils/deviceStorage';
+import { mapIoniconName } from './utils/iconMapping';
+import { useAuthorizedUsers } from './hooks/useAuthorizedUsers';
 
 interface User {
-  phoneNumber: string;
+  id: string;
   name: string;
-  id?: string;
-  serialNumber?: string;
+  phoneNumber: string;
+  serialNumber: string;
   startTime?: string;
   endTime?: string;
 }
 
 export default function Step3Page() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const { activeDevice, refreshDevices } = useDevices();
+  const [device, setDevice] = useState<DeviceData | null>(null);
   const [unitNumber, setUnitNumber] = useState('');
   const [password, setPassword] = useState('');
-  const [newUserSerial, setNewUserSerial] = useState('');
-  const [newUserPhone, setNewUserPhone] = useState('');
   const [newUserName, setNewUserName] = useState('');
+  const [newUserPhone, setNewUserPhone] = useState('');
+  const [newUserSerial, setNewUserSerial] = useState('');
   const [newUserStartTime, setNewUserStartTime] = useState('');
   const [newUserEndTime, setNewUserEndTime] = useState('');
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
+
+  const { users, setUsers, loadUsers, saveUsers } = useAuthorizedUsers(deviceId);
+
+  // Load data based on device context or params
   useEffect(() => {
-    loadData();
-    generateNextSerial();
-  }, [users]);
+    let currentDeviceId: string | undefined = undefined;
+    
+    if (params.deviceId) {
+      currentDeviceId = String(params.deviceId);
+      loadDeviceById(currentDeviceId);
+    } else if (activeDevice) {
+      currentDeviceId = activeDevice.id;
+      setDevice(activeDevice);
+      setUnitNumber(activeDevice.unitNumber);
+      setPassword(activeDevice.password);
+    } else {
+      loadLegacySettings();
+    }
+    
+    setDeviceId(currentDeviceId);
+  }, [params.deviceId, activeDevice]);
 
-  const loadData = async () => {
+  const loadDeviceById = async (deviceId: string) => {
     try {
-      const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
-      const savedPassword = await AsyncStorage.getItem('password');
-      const savedUsers = await AsyncStorage.getItem('authorizedUsers');
-
-      if (savedUnitNumber) setUnitNumber(savedUnitNumber);
-      if (savedPassword) setPassword(savedPassword);
-      if (savedUsers) setUsers(JSON.parse(savedUsers));
+      const devices = await getDevices();
+      const foundDevice = devices.find(d => d.id === deviceId);
+      
+      if (foundDevice) {
+        setDevice(foundDevice);
+        setUnitNumber(foundDevice.unitNumber);
+        setPassword(foundDevice.password);
+      }
     } catch (error) {
-      console.error('Error loading data:', error);
+      console.error('Failed to load device:', error);
     }
   };
 
-  const saveUsers = async (updatedUsers: User[]) => {
+  const loadLegacySettings = async () => {
     try {
-      await AsyncStorage.setItem('authorizedUsers', JSON.stringify(updatedUsers));
-      
-      // Mark step as completed
-      const savedCompletedSteps = await AsyncStorage.getItem('completedSteps');
-      let completedSteps = savedCompletedSteps ? JSON.parse(savedCompletedSteps) : [];
-      
-      if (!completedSteps.includes('step3')) {
-        completedSteps.push('step3');
-        await AsyncStorage.setItem('completedSteps', JSON.stringify(completedSteps));
-      }
+      const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
+      const savedPassword = await AsyncStorage.getItem('password');
+
+      if (savedUnitNumber) setUnitNumber(savedUnitNumber);
+      if (savedPassword) setPassword(savedPassword);
     } catch (error) {
-      console.error('Error saving data:', error);
-      Alert.alert('Error', 'Failed to save users');
+      console.error('Failed to load settings:', error);
     }
   };
 
@@ -186,7 +205,7 @@ export default function Step3Page() {
       }
     }
     
-    // Add user locally
+    // Add user locally for the current device only
     const newUser = {
       phoneNumber: newUserPhone.replace(/[^\d+]/g, ''), // Clean the phone number
       name: newUserName || 'User ' + serialNumber,
@@ -197,28 +216,34 @@ export default function Step3Page() {
     };
     
     const updatedUsers = [...users, newUser];
-    setUsers(updatedUsers);
-    saveUsers(updatedUsers);
     
-    // Create command based on provided data
-    let command = `${password}A${serialNumber}#${newUser.phoneNumber}#`;
-    
-    // Add time restrictions if provided
-    if (newUserStartTime && newUserEndTime) {
-      command += `${newUserStartTime}#${newUserEndTime}#`;
+    // Save users with the current device ID
+    if (deviceId) {
+      setUsers(updatedUsers);
+      saveUsers(updatedUsers);
+      
+      // Create command based on provided data
+      let command = `${password}A${serialNumber}#${newUser.phoneNumber}#`;
+      
+      // Add time restrictions if provided
+      if (newUserStartTime && newUserEndTime) {
+        command += `${newUserStartTime}#${newUserEndTime}#`;
+      }
+      
+      // Send command to add user to device
+      sendSMS(command);
+      
+      // Clear form
+      setNewUserPhone('');
+      setNewUserName('');
+      setNewUserSerial('');
+      setNewUserStartTime('');
+      setNewUserEndTime('');
+      
+      Alert.alert('Success', 'User added successfully');
+    } else {
+      Alert.alert('Error', 'No device selected. Please set up a device first.');
     }
-    
-    // Send command to add user to device
-    sendSMS(command);
-    
-    // Clear form
-    setNewUserPhone('');
-    setNewUserName('');
-    setNewUserSerial('');
-    setNewUserStartTime('');
-    setNewUserEndTime('');
-    
-    Alert.alert('Success', 'User added successfully');
   };
 
   const removeUser = (user: User) => {
@@ -298,7 +323,7 @@ export default function Step3Page() {
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         <Card title="Add Authorized User" elevated>
           <View style={styles.infoContainer}>
-            <Ionicons name="information-circle-outline" size={24} color={colors.primary} style={styles.infoIcon} />
+            <Ionicons name={mapIoniconName("information-circle-outline")} size={24} color={colors.primary} style={styles.infoIcon} />
             <Text style={styles.infoText}>
               Add phone numbers that are authorized to control the GSM relay.
               Serial numbers range from 001 to 200.
@@ -328,7 +353,7 @@ export default function Step3Page() {
             />
             
             <TouchableOpacity style={styles.contactButton} onPress={handleContacts}>
-              <Ionicons name="clipboard-outline" size={22} color={colors.primary} />
+              <Ionicons name={mapIoniconName("copy-outline")} size={22} color={colors.primary} />
               <Text style={styles.smallButtonText}>Paste</Text>
             </TouchableOpacity>
           </View>
@@ -348,7 +373,7 @@ export default function Step3Page() {
               {showAdvanced ? 'Hide Time Restrictions' : 'Add Time Restrictions'}
             </Text>
             <Ionicons 
-              name={showAdvanced ? "chevron-up-outline" : "chevron-down-outline"} 
+              name={mapIoniconName(showAdvanced ? "chevron-up-outline" : "chevron-down-outline")} 
               size={18} 
               color={colors.primary} 
             />
@@ -393,7 +418,7 @@ export default function Step3Page() {
             onPress={addUser}
             loading={isLoading}
             disabled={!newUserPhone || !newUserSerial}
-            icon={<Ionicons name="person-add-outline" size={20} color="white" />}
+            icon={<Ionicons name={mapIoniconName("person-add-outline")} size={20} color="white" />}
             fullWidth
           />
         </Card>
@@ -403,10 +428,14 @@ export default function Step3Page() {
             <Text style={styles.emptyText}>No authorized users yet.</Text>
           ) : (
             users.map((user, index) => (
-              <View key={user.phoneNumber || index} style={[
-                styles.userItem,
-                index < users.length - 1 && styles.userItemBorder
-              ]}>
+              <View 
+                // Create truly unique keys by including a UUID-like combination of properties
+                key={`user_${index}_${user.id || ''}_${user.serialNumber || ''}_${user.phoneNumber?.slice(-4) || Math.random().toString(36).substring(7)}`} 
+                style={[
+                  styles.userItem,
+                  index < users.length - 1 && styles.userItemBorder
+                ]}
+              >
                 <View style={styles.userInfo}>
                   <View style={styles.userHeader}>
                     <Text style={styles.userName}>{user.name}</Text>
@@ -424,7 +453,7 @@ export default function Step3Page() {
                   style={styles.deleteButton}
                   onPress={() => removeUser(user)}
                 >
-                  <Ionicons name="trash-outline" size={22} color={colors.error} />
+                  <Ionicons name={mapIoniconName("trash-outline")} size={22} color={colors.error} />
                 </TouchableOpacity>
               </View>
             ))
@@ -435,7 +464,7 @@ export default function Step3Page() {
             onPress={() => router.push('/authorized-users-list')}
           >
             <Text style={styles.viewAllButtonText}>View All Users</Text>
-            <Ionicons name="chevron-forward-outline" size={18} color={colors.primary} />
+            <Ionicons name={mapIoniconName("chevron-forward-outline")} size={18} color={colors.primary} />
           </TouchableOpacity>
         </Card>
         

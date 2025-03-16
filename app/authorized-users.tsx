@@ -1,16 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Linking, Platform } from 'react-native';
-import { useRouter } from 'expo-router';
+import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Linking, Platform, Alert } from 'react-native';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Header from './components/Header';
 import { addLog } from '../utils/logging';
 import { StandardHeader } from './components/StandardHeader';
+import { useDevices } from './contexts/DeviceContext';
+import { DeviceData } from '../types/devices';
+import { getDevices } from '../utils/deviceStorage';
+
+interface AuthorizedUser {
+  serial: string;
+  phone: string;
+  startTime: string;
+  endTime: string;
+}
 
 export default function AuthorizedUsersPage() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const { activeDevice } = useDevices();
+  const [device, setDevice] = useState<DeviceData | null>(null);
   const [unitNumber, setUnitNumber] = useState('');
   const [password, setPassword] = useState('1234');
-  const [authorizedUsers, setAuthorizedUsers] = useState([
+  const [authorizedUsers, setAuthorizedUsers] = useState<AuthorizedUser[]>([
     { serial: '001', phone: '', startTime: '', endTime: '' },
     { serial: '002', phone: '', startTime: '', endTime: '' },
     { serial: '003', phone: '', startTime: '', endTime: '' },
@@ -18,19 +30,64 @@ export default function AuthorizedUsersPage() {
     { serial: '005', phone: '', startTime: '', endTime: '' },
   ]);
 
+  // Load data based on device context or params
   useEffect(() => {
-    loadData();
-  }, []);
+    if (params.deviceId) {
+      loadDeviceById(String(params.deviceId));
+    } else if (activeDevice) {
+      setDevice(activeDevice);
+      setUnitNumber(activeDevice.unitNumber);
+      setPassword(activeDevice.password);
+    } else {
+      loadLegacyData();
+    }
+  }, [params.deviceId, activeDevice]);
 
-  const loadData = async () => {
+  const loadDeviceById = async (deviceId: string) => {
+    try {
+      const devices = await getDevices();
+      const foundDevice = devices.find(d => d.id === deviceId);
+      
+      if (foundDevice) {
+        setDevice(foundDevice);
+        setUnitNumber(foundDevice.unitNumber);
+        setPassword(foundDevice.password);
+        loadAuthorizedUsers(foundDevice.id);
+      }
+    } catch (error) {
+      console.error('Failed to load device:', error);
+    }
+  };
+
+  const loadLegacyData = async () => {
     try {
       const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
       const savedPassword = await AsyncStorage.getItem('password');
-      const savedAuthorizedUsers = await AsyncStorage.getItem('authorizedUsers');
 
       if (savedUnitNumber) setUnitNumber(savedUnitNumber);
       if (savedPassword) setPassword(savedPassword);
-      if (savedAuthorizedUsers) setAuthorizedUsers(JSON.parse(savedAuthorizedUsers));
+      
+      // Load legacy authorized users
+      loadAuthorizedUsers();
+    } catch (error) {
+      console.error('Error loading data:', error);
+    }
+  };
+
+  const loadAuthorizedUsers = async (deviceId?: string) => {
+    try {
+      // Check for device-specific users first
+      let savedUsers = null;
+      if (deviceId) {
+        savedUsers = await AsyncStorage.getItem(`authorizedUsers_${deviceId}`);
+      }
+      
+      // Fall back to legacy storage if no device-specific users
+      if (!savedUsers) {
+        savedUsers = await AsyncStorage.getItem('authorizedUsers');
+      }
+
+      if (savedUsers) setAuthorizedUsers(JSON.parse(savedUsers));
     } catch (error) {
       console.error('Error loading data:', error);
     }
@@ -38,11 +95,18 @@ export default function AuthorizedUsersPage() {
 
   const saveToLocalStorage = async () => {
     try {
-      await AsyncStorage.setItem('authorizedUsers', JSON.stringify(authorizedUsers));
-      alert('User settings saved successfully!');
+      // Save to device-specific key if available
+      if (device?.id) {
+        await AsyncStorage.setItem(`authorizedUsers_${device.id}`, JSON.stringify(authorizedUsers));
+      } else {
+        // Otherwise use legacy storage
+        await AsyncStorage.setItem('authorizedUsers', JSON.stringify(authorizedUsers));
+      }
+      
+      Alert.alert('Success', 'User settings saved successfully!');
     } catch (error) {
       console.error('Error saving data:', error);
-      alert('Failed to save user settings');
+      Alert.alert('Error', 'Failed to save user settings');
     }
   };
 

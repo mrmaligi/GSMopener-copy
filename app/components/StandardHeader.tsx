@@ -3,21 +3,24 @@ import { StyleSheet, View, Text, TouchableOpacity, Platform } from 'react-native
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, shadows } from '../styles/theme';
+import { shadows } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { mapIoniconName } from '../utils/iconMapping';
 
 interface StandardHeaderProps {
   showBack?: boolean;
   backTo?: string;
   rightAction?: React.ReactNode;
   onBackPress?: () => void;
+  title?: string; // Added title prop
 }
 
 export const StandardHeader: React.FC<StandardHeaderProps> = ({
   showBack = false,
   backTo = '',
   rightAction,
-  onBackPress
+  onBackPress,
+  title
 }) => {
   const router = useRouter();
   const { isDarkMode, colors } = useTheme();
@@ -26,7 +29,7 @@ export const StandardHeader: React.FC<StandardHeaderProps> = ({
     if (onBackPress) {
       onBackPress();
     } else if (backTo) {
-      router.push(backTo);
+      router.replace(backTo); // Changed to replace to avoid type error
     } else {
       router.back();
     }
@@ -51,7 +54,7 @@ export const StandardHeader: React.FC<StandardHeaderProps> = ({
             accessibilityLabel="Go back"
           >
             <Ionicons 
-              name="arrow-back" 
+              name={mapIoniconName("arrow-back")} 
               size={24} 
               color={colors.text.primary} 
             />
@@ -63,7 +66,11 @@ export const StandardHeader: React.FC<StandardHeaderProps> = ({
         )}
 
         <View style={styles.headerMiddle}>
-          {showBack && (
+          {(showBack && title) ? (
+            <Text style={[styles.title, { color: colors.text.primary }]}>
+              {title}
+            </Text>
+          ) : showBack && (
             <Text style={[styles.title, { color: colors.text.primary }]}>
               ((APC))®
             </Text>
@@ -106,3 +113,5 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+
+export default StandardHeader;

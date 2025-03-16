@@ -1,26 +1,32 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  FlatList, 
-  RefreshControl,
-  TouchableOpacity,
-  Alert
-} from 'react-native';
-import { StatusBar } from 'expo-status-bar';
-import { Ionicons } from '@expo/vector-icons';
+import { StyleSheet, View, Text, FlatList, RefreshControl, Alert, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { getLogs, clearLogs, LogEntry } from '../../utils/logging';
-import { colors } from '../styles/theme';
+import { Ionicons } from '@expo/vector-icons';
+import { Card } from '../components/Card';
+import { Button } from '../components/Button';
+import { colors, spacing, borderRadius } from '../styles/theme';
+import { getDeviceLogs, clearDeviceLogs } from '../../utils/logger';
 import { StandardHeader } from '../components/StandardHeader';
+import { useDevices } from '../contexts/DeviceContext';
+
+interface LogEntry {
+  id: string;
+  timestamp: string;
+  action: string;
+  details: string;
+  success: boolean;
+  deviceId?: string;
+}
 
 export default function LogsPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const { activeDevice } = useDevices();
 
   const loadLogs = async () => {
-    const fetchedLogs = await getLogs();
+    // If activeDevice exists, get device-specific logs
+    // otherwise fall back to all logs (legacy behavior)
+    const fetchedLogs = await getDeviceLogs(activeDevice?.id);
     setLogs(fetchedLogs);
   };
 
@@ -34,25 +40,28 @@ export default function LogsPage() {
   useFocusEffect(
     useCallback(() => {
       loadLogs();
-    }, [])
+    }, [activeDevice]) // Reload logs when active device changes
   );
 
   // Initial load
   useEffect(() => {
     loadLogs();
-  }, []);
+  }, [activeDevice]); // Reload logs when active device changes
 
   const handleClearLogs = () => {
     Alert.alert(
       'Clear Logs',
-      'Are you sure you want to clear all logs? This cannot be undone.',
+      activeDevice
+        ? `Are you sure you want to clear all logs for ${activeDevice.name}?`
+        : 'Are you sure you want to clear all logs? This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         { 
           text: 'Clear', 
           style: 'destructive', 
           onPress: async () => {
-            await clearLogs();
+            // Clear logs for the active device (or all if no active device)
+            await clearDeviceLogs(activeDevice?.id);
             setLogs([]);
           } 
         }
@@ -60,124 +69,60 @@ export default function LogsPage() {
     );
   };
 
-  const formatDate = (isoString: string) => {
-    const date = new Date(isoString);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleString();
   };
 
-  // Get appropriate icon for different actions
-  const getActionIcon = (action: string): {name: string; color: string} => {
-    if (action.includes('Gate Open')) return {name: 'unlock-outline', color: colors.success};
-    if (action.includes('Gate Close')) return {name: 'lock-closed-outline', color: colors.primary};
-    if (action.includes('Password Change')) return {name: 'key-outline', color: colors.warning};
-    if (action.includes('User Management')) return {name: 'people-outline', color: colors.info};
-    if (action.includes('Admin Registration')) return {name: 'person-add-outline', color: '#9c27b0'};
-    if (action.includes('Access Control')) return {name: 'shield-outline', color: '#3f51b5'};
-    if (action.includes('Relay Timing')) return {name: 'timer-outline', color: '#ff9800'};
-    if (action.includes('Status Check')) return {name: 'help-circle-outline', color: '#009688'};
-    if (action.includes('Initial Setup')) return {name: 'construct-outline', color: colors.secondary};
-    return {name: 'information-outline', color: colors.primary};
-  };
-
-  const getStatusLabel = (item: LogEntry) => {
-    if (!item.success) return "Failed";
-    
-    if (item.action.includes('Gate Open')) return "Gate Opened";
-    if (item.action.includes('Gate Close')) return "Gate Closed";
-    if (item.action.includes('Password Change')) return "Password Updated";
-    if (item.action.includes('User Management')) {
-      if (item.details.includes('Added')) return "User Added";
-      if (item.details.includes('Removed')) return "User Removed";
-      return "Updated";
-    }
-    if (item.action.includes('Admin Registration')) return "Registered";
-    if (item.action.includes('Access Control')) return "Mode Changed";
-    if (item.action.includes('Relay Timing')) return "Timing Set";
-    if (item.action.includes('Status Check')) return "Status Requested";
-    
-    return "Success";
-  };
-
-  const renderLogItem = ({ item }: { item: LogEntry }) => {
-    const icon = getActionIcon(item.action);
-    const statusLabel = getStatusLabel(item);
-    
-    return (
-      <View style={[styles.logItem, item.success ? styles.successLog : styles.errorLog]}>
-        <View style={styles.iconContainer}>
-          <Ionicons name={icon.name} size={24} color={icon.color} />
+  const renderLogItem = ({ item }: { item: LogEntry }) => (
+    <Card style={[styles.logItem, { borderLeftColor: item.success ? colors.success : colors.error }]}>
+      <View style={styles.logItemContent}>
+        <View style={styles.logHeader}>
+          <Text style={styles.logAction}>{item.action}</Text>
+          <Text style={styles.logTime}>{formatDate(item.timestamp)}</Text>
         </View>
-        
-        <View style={styles.logContent}>
-          <View style={styles.logHeader}>
-            <Text style={styles.logAction}>{item.action}</Text>
-            <Text 
-              style={[
-                styles.logStatus, 
-                {
-                  backgroundColor: item.success ? `${colors.success}30` : `${colors.danger}30`,
-                  color: item.success ? colors.success : colors.danger
-                }
-              ]}
-            >
-              {statusLabel}
-            </Text>
-          </View>
-          
-          <Text style={styles.logDetails}>{item.details}</Text>
-          
-          <View style={styles.logFooter}>
-            <Text style={styles.logTime}>{formatDate(item.timestamp)}</Text>
-            {item.user && <Text style={styles.logUser}>by {item.user}</Text>}
-          </View>
-        </View>
+        <Text style={styles.logDetails}>{item.details}</Text>
       </View>
-    );
-  };
+    </Card>
+  );
 
   return (
     <View style={styles.container}>
-      <StatusBar style="dark" />
+      <StandardHeader />
       
-      <StandardHeader 
-        rightAction={
-          logs.length > 0 ? (
-            <TouchableOpacity 
-              style={styles.clearButton} 
-              onPress={handleClearLogs}
-            >
-              <Ionicons name="trash-outline" size={24} color={colors.danger} />
-            </TouchableOpacity>
-          ) : null
+      <View style={styles.deviceInfo}>
+        <Text style={styles.deviceInfoText}>
+          {activeDevice 
+            ? `Logs for device: ${activeDevice.name} (${activeDevice.unitNumber})`
+            : 'All logs (no device selected)'}
+        </Text>
+      </View>
+      
+      <FlatList
+        data={logs}
+        renderItem={renderLogItem}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.logList}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Ionicons name="document-text-outline" size={64} color={colors.text.disabled} />
+            <Text style={styles.emptyText}>No logs found</Text>
+          </View>
+        }
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       />
       
-      {logs.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="document-text-outline" size={64} color={colors.gray} />
-          <Text style={styles.emptyText}>No activity recorded yet</Text>
-          <Text style={styles.emptySubText}>
-            Commands sent to your GSM relay device will appear here
-          </Text>
+      {logs.length > 0 && (
+        <View style={styles.buttonContainer}>
+          <Button 
+            title="Clear Logs" 
+            icon="trash-outline"
+            onPress={handleClearLogs}
+            variant="outline"
+          />
         </View>
-      ) : (
-        <FlatList
-          data={logs}
-          renderItem={renderLogItem}
-          keyExtractor={item => item.id}
-          contentContainerStyle={styles.listContent}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              colors={[colors.primary]}
-              tintColor={colors.primary}
-            />
-          }
-        />
       )}
     </View>
   );
@@ -186,101 +131,62 @@ export default function LogsPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f7f7f7',
+    backgroundColor: colors.background,
   },
-  clearButton: {
-    padding: 8,
+  deviceInfo: {
+    backgroundColor: colors.surfaceVariant,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  listContent: {
-    padding: 16,
-    paddingBottom: 90,
+  deviceInfoText: {
+    color: colors.text.secondary,
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  logList: {
+    padding: spacing.md,
   },
   logItem: {
-    marginBottom: 12,
-    borderRadius: 12,
-    backgroundColor: 'white',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-    flexDirection: 'row',
-    overflow: 'hidden',
+    marginBottom: spacing.sm,
+    borderLeftWidth: 4,
+    padding: spacing.sm,
   },
-  successLog: {
-    borderLeftWidth: 0,
-  },
-  errorLog: {
-    borderLeftWidth: 0,
-  },
-  iconContainer: {
-    width: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingLeft: 8,
-  },
-  logContent: {
-    flex: 1,
-    padding: 12,
-    paddingLeft: 0,
+  logItemContent: {
+    marginLeft: spacing.xs,
   },
   logHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: spacing.xs,
   },
   logAction: {
-    fontWeight: 'bold',
     fontSize: 16,
-    color: '#333',
+    fontWeight: '600',
+    color: colors.text.primary,
   },
-  logStatus: {
+  logTime: {
     fontSize: 12,
-    color: '#666',
-    backgroundColor: '#f0f0f0',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-    overflow: 'hidden',
+    color: colors.text.secondary,
   },
   logDetails: {
     fontSize: 14,
-    color: '#333',
-    marginBottom: 6,
-  },
-  logFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  logTime: {
-    color: '#888',
-    fontSize: 12,
-  },
-  logUser: {
-    color: '#888',
-    fontSize: 12,
+    color: colors.text.secondary,
   },
   emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    justifyContent: 'center',
+    marginTop: 100,
   },
   emptyText: {
-    marginTop: 16,
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#555',
-    textAlign: 'center',
+    fontSize: 16,
+    color: colors.text.disabled,
+    marginTop: spacing.md,
   },
-  emptySubText: {
-    marginTop: 8,
-    fontSize: 14,
-    color: '#888',
-    textAlign: 'center',
-    paddingHorizontal: 32,
-    lineHeight: 20,
-  }
+  buttonContainer: {
+    padding: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
 });

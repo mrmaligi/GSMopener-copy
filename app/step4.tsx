@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Platform, Linking, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StandardHeader } from './components/StandardHeader';
 import { Card } from './components/Card';
@@ -9,9 +9,16 @@ import { Button } from './components/Button';
 import { TextInputField } from './components/TextInputField';
 import { colors, spacing, shadows, borderRadius } from './styles/theme';
 import { addLog } from '../utils/logging';
+import { useDevices } from './contexts/DeviceContext';
+import { DeviceData } from '../types/devices';
+import { getDevices, updateDevice } from '../utils/deviceStorage';
+import { mapIoniconName } from './utils/iconMapping';
 
 export default function Step4Page() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const { activeDevice, refreshDevices } = useDevices();
+  const [device, setDevice] = useState<DeviceData | null>(null);
   const [unitNumber, setUnitNumber] = useState('');
   const [password, setPassword] = useState('');
   const [relaySettings, setRelaySettings] = useState({
@@ -20,13 +27,44 @@ export default function Step4Page() {
   });
   const [isLoading, setIsLoading] = useState(false);
 
-  useFocusEffect(
-    React.useCallback(() => {
-      loadData();
-    }, [])
-  );
+  // Load appropriate device data
+  useEffect(() => {
+    if (params.deviceId) {
+      // Load specific device if ID provided
+      loadDeviceById(String(params.deviceId));
+    } else if (activeDevice) {
+      // Otherwise use active device
+      setDevice(activeDevice);
+      setUnitNumber(activeDevice.unitNumber);
+      setPassword(activeDevice.password);
+      if (activeDevice.relaySettings) {
+        setRelaySettings(activeDevice.relaySettings);
+      }
+    } else {
+      // Fall back to legacy storage
+      loadLegacyData();
+    }
+  }, [params.deviceId, activeDevice]);
 
-  const loadData = async () => {
+  const loadDeviceById = async (deviceId: string) => {
+    try {
+      const devices = await getDevices();
+      const foundDevice = devices.find(d => d.id === deviceId);
+      
+      if (foundDevice) {
+        setDevice(foundDevice);
+        setUnitNumber(foundDevice.unitNumber);
+        setPassword(foundDevice.password);
+        if (foundDevice.relaySettings) {
+          setRelaySettings(foundDevice.relaySettings);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading device:', error);
+    }
+  };
+
+  const loadLegacyData = async () => {
     try {
       const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
       const savedPassword = await AsyncStorage.getItem('password');
@@ -42,7 +80,18 @@ export default function Step4Page() {
 
   const saveToLocalStorage = async () => {
     try {
-      await AsyncStorage.setItem('relaySettings', JSON.stringify(relaySettings));
+      if (device) {
+        // Update device with new relay settings
+        const updatedDevice = {
+          ...device,
+          relaySettings
+        };
+        await updateDevice(updatedDevice);
+        await refreshDevices();
+      } else {
+        // Legacy storage
+        await AsyncStorage.setItem('relaySettings', JSON.stringify(relaySettings));
+      }
       
       // Mark step as completed
       const savedCompletedSteps = await AsyncStorage.getItem('completedSteps');
@@ -162,7 +211,7 @@ export default function Step4Page() {
       
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         <View style={styles.infoContainer}>
-          <Ionicons name="information-circle-outline" size={24} color={colors.primary} style={styles.infoIcon} />
+          <Ionicons name={mapIoniconName("information-circle-outline")} size={24} color={colors.primary} style={styles.infoIcon} />
           <Text style={styles.infoText}>
             Configure how your GSM relay operates. These settings control access permissions and relay behavior.
           </Text>

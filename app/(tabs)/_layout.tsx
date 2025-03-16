@@ -4,12 +4,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../styles/theme';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 
-// TabBarIcon function definition remains unchanged
+// Updated TabBarIcon function to match the Ionicons pattern you're using
 function TabBarIcon(props: {
-  name: React.ComponentProps<typeof FontAwesome>['name'];
+  name: React.ComponentProps<typeof Ionicons>['name'];
   color: string;
+  size: number;
 }) {
-  return <FontAwesome size={28} style={{ marginBottom: -3 }} {...props} />;
+  return <Ionicons {...props} />;
 }
 
 export default function TabLayout() {

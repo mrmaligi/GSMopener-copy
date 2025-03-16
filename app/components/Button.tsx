@@ -11,9 +11,11 @@ import {
 } from 'react-native';
 import { spacing, borderRadius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { Ionicons } from '@expo/vector-icons';
+import { mapIoniconName } from '../utils/iconMapping';
 
-type ButtonVariant = 'solid' | 'outline' | 'ghost';
-type ButtonSize = 'sm' | 'md' | 'lg';
+export type ButtonVariant = 'solid' | 'outline' | 'ghost' | 'primary' | 'secondary';
+export type ButtonSize = 'sm' | 'md' | 'lg';
 
 interface ButtonProps {
   title: string;
@@ -23,10 +25,11 @@ interface ButtonProps {
   fullWidth?: boolean;
   disabled?: boolean;
   loading?: boolean;
-  icon?: React.ReactNode;
+  icon?: React.ReactNode | string;
   iconPosition?: 'left' | 'right';
   style?: StyleProp<ViewStyle>;
   textStyle?: StyleProp<TextStyle>;
+  small?: boolean; // Added for backward compatibility
 }
 
 export const Button: React.FC<ButtonProps> = ({
@@ -41,8 +44,18 @@ export const Button: React.FC<ButtonProps> = ({
   iconPosition = 'left',
   style,
   textStyle,
+  small = false,
 }) => {
   const { colors } = useTheme();
+  
+  // Map variant values for backward compatibility
+  const mappedVariant: ButtonVariant = 
+    variant === 'primary' ? 'solid' :
+    variant === 'secondary' ? 'outline' : 
+    variant;
+
+  // Use small prop if provided
+  const finalSize = small ? 'sm' : size;
   
   // Create dynamic styles based on theme
   const dynamicStyles = {
@@ -81,37 +94,46 @@ export const Button: React.FC<ButtonProps> = ({
 
   const buttonStyles = [
     styles.button,
-    styles[size],
-    variant === 'solid' && [styles.solid, dynamicStyles.solid],
-    variant === 'outline' && [styles.outline, dynamicStyles.outline],
-    variant === 'ghost' && [styles.ghost, dynamicStyles.ghost],
+    styles[finalSize],
+    mappedVariant === 'solid' && [styles.solid, dynamicStyles.solid],
+    mappedVariant === 'outline' && [styles.outline, dynamicStyles.outline],
+    mappedVariant === 'ghost' && [styles.ghost, dynamicStyles.ghost],
     fullWidth && styles.fullWidth,
     disabled && [
       styles.disabled,
-      variant === 'solid' && dynamicStyles.solidDisabled,
-      variant === 'outline' && dynamicStyles.outlineDisabled,
+      mappedVariant === 'solid' && dynamicStyles.solidDisabled,
+      mappedVariant === 'outline' && dynamicStyles.outlineDisabled,
     ],
     style,
   ];
 
   const textStyles = [
     styles.text,
-    styles[`${size}Text`],
-    variant === 'solid' && dynamicStyles.solidText,
-    variant === 'outline' && dynamicStyles.outlineText,
-    variant === 'ghost' && dynamicStyles.ghostText,
+    styles[`${finalSize}Text`],
+    mappedVariant === 'solid' && dynamicStyles.solidText,
+    mappedVariant === 'outline' && dynamicStyles.outlineText,
+    mappedVariant === 'ghost' && dynamicStyles.ghostText,
     disabled && dynamicStyles.disabledText,
     textStyle,
   ];
 
   const renderContent = () => {
     if (loading) {
-      return <ActivityIndicator color={variant === 'outline' || variant === 'ghost' ? colors.primary : colors.text.inverse} />;
+      return <ActivityIndicator color={mappedVariant === 'outline' || mappedVariant === 'ghost' ? colors.primary : colors.text.inverse} />;
     }
 
+    // Handle string icon names (for Ionicons)
     const iconElement = icon && (
       <View style={[styles.iconContainer, iconPosition === 'right' && styles.iconRight]}>
-        {icon}
+        {typeof icon === 'string' ? (
+          <Ionicons 
+            name={mapIoniconName(icon as any)} 
+            size={finalSize === 'sm' ? 16 : finalSize === 'md' ? 20 : 24} 
+            color={mappedVariant === 'solid' ? colors.text.inverse : colors.primary} 
+          />
+        ) : (
+          icon
+        )}
       </View>
     );
 

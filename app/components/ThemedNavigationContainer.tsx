@@ -1,18 +1,18 @@
 import React from 'react';
-import { useNavigationContainerTheme } from '@react-navigation/native';
-import { navigationTheme } from '../styles/theme';
+import { NavigationContainer } from '@react-navigation/native';
 import { useTheme } from '../contexts/ThemeContext';
+import { navigationTheme } from '../styles/theme';
 
-// This component doesn't wrap in NavigationContainer anymore
-// Instead it just provides theme context to the existing container
-export function useThemedNavigation() {
-  const { theme } = useTheme();
-  const currentTheme = theme === 'dark' ? navigationTheme.dark : navigationTheme.light;
+interface Props {
+  children: React.ReactNode;
+}
+
+export function ThemedNavigationContainer({ children }: Props) {
+  const { isDarkMode } = useTheme();
+  const theme = isDarkMode ? navigationTheme.dark : navigationTheme.light;
   
-  return currentTheme;
+  return <NavigationContainer theme={theme}>{children}</NavigationContainer>;
 }
 
-// Keep this for backwards compatibility but make it a simple wrapper
-export function ThemedNavigationContainer({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
-}
+// Export as default for expo-router compatibility
+export default ThemedNavigationContainer;

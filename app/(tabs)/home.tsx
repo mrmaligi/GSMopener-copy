@@ -4,19 +4,43 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
-import { colors, spacing, shadows } from '../styles/theme';
+import { colors, spacing, shadows, borderRadius } from '../styles/theme';
 import { addLog } from '../../utils/logging';
 import { StandardHeader } from '../components/StandardHeader';
+import { useRouter } from 'expo-router';
+import { DeviceData } from '../../types/devices';
+import { useDevices } from '../contexts/DeviceContext';
 
 export default function HomePage() {
+  const router = useRouter();
+  const { devices, activeDevice, setActiveDeviceById, refreshDevices, isLoading } = useDevices();
   const [unitNumber, setUnitNumber] = useState('');
   const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [isSendingSms, setIsSendingSms] = useState(false);
   const [lastAction, setLastAction] = useState<{ action: string; timestamp: Date } | null>(null);
 
+  // Set unit number and password whenever active device changes
   useEffect(() => {
-    loadSettings();
-  }, []);
+    if (activeDevice) {
+      setUnitNumber(activeDevice.unitNumber);
+      setPassword(activeDevice.password);
+    } else {
+      // Fall back to legacy method if no active device
+      loadLegacySettings();
+    }
+  }, [activeDevice]);
+  
+  const loadLegacySettings = async () => {
+    try {
+      const storedUnitNumber = await AsyncStorage.getItem('unitNumber');
+      const storedPassword = await AsyncStorage.getItem('password');
+
+      if (storedUnitNumber) setUnitNumber(storedUnitNumber);
+      if (storedPassword) setPassword(storedPassword);
+    } catch (error) {
+      console.error('Failed to load legacy settings:', error);
+    }
+  };
   
   const handleAddDevice = () => {
     Alert.alert(
@@ -24,11 +48,11 @@ export default function HomePage() {
       'Select device type to add',
       [
         {
-          text: 'Add new Connect4v',
+          text: 'Add Connect4v',
           onPress: () => handleAddConnect4v()
         },
         {
-          text: 'Add new Phonic4v',
+          text: 'Add Phonic4v (Coming Soon)',
           onPress: () => handleAddPhonic4v()
         },
         {
@@ -40,29 +64,33 @@ export default function HomePage() {
   };
   
   const handleAddConnect4v = () => {
-    // Implementation for adding Connect4v device
     addLog('Device Management', 'Started adding new Connect4v device', true);
-    // Navigate to setup page or show form for Connect4v
-    // This could be expanded based on requirements
+    router.push('/device-add');
   };
   
   const handleAddPhonic4v = () => {
-    // Implementation for adding Phonic4v device
-    addLog('Device Management', 'Started adding new Phonic4v device', true);
-    // Navigate to setup page or show form for Phonic4v
-    // This could be expanded based on requirements
+    Alert.alert(
+      'Coming Soon',
+      'Phonic4v support is coming soon. Currently, only Connect4v devices are supported.'
+    );
   };
 
-  const loadSettings = async () => {
+  const handleSwitchDevice = async (device: DeviceData) => {
     try {
-      const storedUnitNumber = await AsyncStorage.getItem('unitNumber');
-      const storedPassword = await AsyncStorage.getItem('password');
-
-      if (storedUnitNumber) setUnitNumber(storedUnitNumber);
-      if (storedPassword) setPassword(storedPassword);
+      await setActiveDeviceById(device.id);
+      
+      // Log the device switch action
+      await addLog('Device Management', `Switched to device: ${device.name}`, true);
+      
+      Alert.alert('Device Activated', `${device.name} is now the active device`);
     } catch (error) {
-      console.error('Failed to load settings:', error);
+      console.error('Failed to switch device:', error);
+      Alert.alert('Error', 'Failed to switch device');
     }
+  };
+
+  const goToDeviceManagement = () => {
+    router.push('/devices');
   };
 
   const sendSMS = async (command: string) => {
@@ -76,7 +104,7 @@ export default function HomePage() {
       return;
     }
 
-    setIsLoading(true);
+    setIsSendingSms(true);
 
     try {
       const formattedUnitNumber = Platform.OS === 'ios' ? unitNumber.replace('+', '') : unitNumber;
@@ -123,16 +151,16 @@ export default function HomePage() {
         action: getActionName(command),
         timestamp: new Date(),
       });
-    } catch (error) {
+    } catch (error: any) { // Type as 'any' to handle error.message
       console.error('Failed to send SMS:', error);
       Alert.alert(
         'Error',
         'Failed to open SMS. Please try again.',
         [{ text: 'OK' }]
       );
-      await addLog('Home Action', `Error: ${error.message}`, false);
+      await addLog('Home Action', `Error: ${error.message || 'Unknown error'}`, false);
     } finally {
-      setIsLoading(false);
+      setIsSendingSms(false);
     }
   };
 
@@ -159,6 +187,60 @@ export default function HomePage() {
       />
 
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+        {/* Active Device Card */}
+        <Card title="Active Device" elevated>
+          {activeDevice ? (
+            <View style={styles.activeDeviceContainer}>
+              <View style={styles.deviceHeader}>
+                <Text style={styles.deviceName}>{activeDevice.name}</Text>
+                <TouchableOpacity 
+                  style={styles.manageButton} 
+                  onPress={goToDeviceManagement}
+                >
+                  <Text style={styles.manageButtonText}>Manage</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.devicePhone}>
+                <Ionicons name="call-outline" size={16} /> {activeDevice.unitNumber}
+              </Text>
+              
+              {devices.length > 1 && (
+                <View style={styles.otherDevicesSection}>
+                  <Text style={styles.otherDevicesLabel}>Switch to:</Text>
+                  <ScrollView 
+                    horizontal 
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.devicesList}
+                  >
+                    {devices
+                      .filter(device => device.id !== activeDevice.id)
+                      .map(device => (
+                        <TouchableOpacity
+                          key={device.id}
+                          style={styles.deviceChip}
+                          onPress={() => handleSwitchDevice(device)}
+                        >
+                          <Text style={styles.deviceChipText}>{device.name}</Text>
+                        </TouchableOpacity>
+                      ))
+                    }
+                  </ScrollView>
+                </View>
+              )}
+            </View>
+          ) : (
+            <View style={styles.emptyDeviceContainer}>
+              <Text style={styles.emptyDeviceText}>No devices configured yet</Text>
+              <Button
+                title="Add Device"
+                variant="solid"
+                onPress={handleAddDevice}
+                style={styles.emptyDeviceButton}
+              />
+            </View>
+          )}
+        </Card>
+
         {/* Quick Actions Card */}
         <Card title="Quick Actions" elevated>
           <View style={styles.actionGrid}>
@@ -278,5 +360,75 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.text.secondary,
     lineHeight: 20,
+  },
+  activeDeviceContainer: {
+    paddingVertical: spacing.sm,
+  },
+  deviceHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  deviceName: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text.primary,
+  },
+  devicePhone: {
+    fontSize: 16,
+    color: colors.text.secondary,
+    marginBottom: spacing.sm,
+  },
+  manageButton: {
+    backgroundColor: colors.surfaceVariant,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs / 2,
+    borderRadius: borderRadius.pill,
+  },
+  manageButtonText: {
+    fontSize: 12,
+    color: colors.primary,
+    fontWeight: '500',
+  },
+  otherDevicesSection: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  otherDevicesLabel: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    marginBottom: spacing.xs,
+  },
+  devicesList: {
+    flexDirection: 'row',
+  },
+  deviceChip: {
+    backgroundColor: colors.surfaceVariant,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.pill,
+    marginRight: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  deviceChipText: {
+    fontSize: 14,
+    color: colors.primary,
+    fontWeight: '500',
+  },
+  emptyDeviceContainer: {
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+  },
+  emptyDeviceText: {
+    fontSize: 16,
+    color: colors.text.secondary,
+    marginBottom: spacing.md,
+  },
+  emptyDeviceButton: {
+    minWidth: 150,
   },
 });
