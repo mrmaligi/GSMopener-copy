@@ -65,20 +65,61 @@ export const updateDevice = async (device: DeviceData): Promise<void> => {
 };
 
 // Delete a device
-export const deleteDevice = async (deviceId: string): Promise<void> => {
+export const deleteDevice = async (deviceId: string): Promise<boolean> => {
   try {
+    console.log(`deviceStorage: Deleting device ${deviceId}`);
+    
+    // Get current devices
     const devices = await getDevices();
-    const updatedDevices = devices.filter(d => d.id !== deviceId);
+    const initialCount = devices.length;
+    
+    // Debug the device IDs - this helps us see what's happening
+    console.log('deviceStorage: Current device IDs:', devices.map(d => d.id));
+    
+    // Ensure the device ID is properly formatted for comparison
+    const targetId = String(deviceId).trim();
+    
+    // Filter out the device to delete with more careful comparison
+    const updatedDevices = devices.filter(d => {
+      const currentId = String(d.id).trim();
+      const isMatch = currentId !== targetId;
+      if (!isMatch) {
+        console.log(`deviceStorage: Found device to remove: ${d.name || 'Unnamed'} (${d.id})`);
+      }
+      return isMatch;
+    });
+    
+    console.log(`deviceStorage: Filtered from ${initialCount} to ${updatedDevices.length} devices`);
+    
+    // If no device was removed, return false
+    if (initialCount === updatedDevices.length) {
+      console.log(`deviceStorage: No device found with ID ${deviceId}`);
+      return false;
+    }
+    
+    // Save updated list
     await AsyncStorage.setItem(DEVICES_STORAGE_KEY, JSON.stringify(updatedDevices));
     
-    // If the active device was deleted, set a new active device
+    // If the deleted device was the active one, update the active device
     const activeId = await getActiveDeviceId();
-    if (activeId === deviceId && updatedDevices.length > 0) {
-      await setActiveDevice(updatedDevices[0].id);
+    if (activeId && activeId.trim() === targetId) {
+      console.log('deviceStorage: Deleted device was active, updating active device');
+      
+      if (updatedDevices.length > 0) {
+        // Set first device as active
+        await setActiveDevice(updatedDevices[0].id);
+        console.log(`deviceStorage: New active device: ${updatedDevices[0].id}`);
+      } else {
+        // Clear active device if no devices remain
+        await AsyncStorage.removeItem(ACTIVE_DEVICE_KEY);
+        console.log('deviceStorage: No devices remain, cleared active device');
+      }
     }
+    
+    return true;
   } catch (error) {
     console.error('Failed to delete device:', error);
-    throw error;
+    return false;
   }
 };
 

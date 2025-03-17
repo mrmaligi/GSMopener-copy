@@ -107,96 +107,171 @@ export const shareBackup = async (): Promise<void> => {
 };
 
 /**
- * Restores app data from a backup file - super basic version
+ * Restores app data from a backup file - ultra basic version
  */
 export const restoreFromBackup = async (backupJson: string): Promise<boolean> => {
-  console.log('RESTORE STARTING with content length:', backupJson?.length || 0);
-  
-  // ULTRA SIMPLE RESTORE APPROACH
   try {
-    // Clean up and check input
-    if (!backupJson || backupJson.trim().length < 2) {
-      console.error('Empty backup content');
-      throw new Error('Backup file is empty');
+    console.log(`RESTORE: Content length=${backupJson?.length || 0}`);
+    
+    if (!backupJson) {
+      console.error('RESTORE: Empty content provided');
+      throw new Error('Backup file appears to be empty');
     }
     
-    // Simplify - make sure we have a clean string
-    const cleanJson = backupJson.trim();
+    // Prepare content for parsing - handle common issues
+    let processedContent = backupJson.trim();
     
-    // Find the start of the actual JSON object if there's any prefix
-    let jsonToUse = cleanJson;
-    const firstBrace = cleanJson.indexOf('{');
-    if (firstBrace > 0) {
-      jsonToUse = cleanJson.substring(firstBrace);
-      console.log(`Trimmed ${firstBrace} characters from start of file`);
+    // Find the valid JSON start (more aggressive approach)
+    const jsonStartOptions = [
+      processedContent.indexOf('{"'),  // Standard JSON object start
+      processedContent.indexOf('{\n"'), // JSON with newline
+      processedContent.indexOf('{ "'),  // JSON with space
+      processedContent.lastIndexOf('{"'),  // Try finding the last occurrence too
+    ].filter(pos => pos >= 0);
+    
+    const jsonStart = jsonStartOptions.length > 0 ? Math.min(...jsonStartOptions) : -1;
+    
+    if (jsonStart > 0) {
+      processedContent = processedContent.substring(jsonStart);
+      console.log(`RESTORE: Fixed starting position, removed ${jsonStart} chars`);
     }
     
-    // Extract the actual backup data
-    console.log('Parsing JSON...');
-    let backupData;
+    // Fix potential trailing issues - find a balanced closing brace
+    let braceCount = 0;
+    let lastValidPos = 0;
+    
+    // Simple brace balancing to find the end of JSON
+    for (let i = 0; i < processedContent.length; i++) {
+      const char = processedContent[i];
+      if (char === '{') braceCount++;
+      if (char === '}') {
+        braceCount--;
+        if (braceCount === 0) lastValidPos = i + 1;
+      }
+    }
+    
+    if (lastValidPos > 0 && lastValidPos < processedContent.length) {
+      processedContent = processedContent.substring(0, lastValidPos);
+      console.log(`RESTORE: Trimmed to balanced JSON ending at position ${lastValidPos}`);
+    }
+    
+    // Validate basic JSON structure
+    console.log('RESTORE: Cleaned content preview:', processedContent.substring(0, Math.min(50, processedContent.length)));
+    
+    // PARSE STEP - Use a more robust approach
+    let parsedData;
     try {
-      backupData = JSON.parse(jsonToUse);
-      console.log('Successfully parsed JSON');
+      // Regular parsing first
+      parsedData = JSON.parse(processedContent);
+      console.log('RESTORE: JSON parsing succeeded');
     } catch (parseError) {
-      console.error('Parse error:', parseError.message);
-      throw new Error('Could not parse backup file - invalid JSON format');
+      console.error('RESTORE: JSON parse error -', parseError.message);
+      
+      // Try manual repair of common JSON issues
+      try {
+        console.log('RESTORE: Attempting to repair malformed JSON');
+        
+        // Replace common JSON errors
+        let fixedJson = processedContent
+          .replace(/,\s*}/g, '}')     // Remove trailing commas in objects
+          .replace(/,\s*]/g, ']');    // Remove trailing commas in arrays
+          
+        parsedData = JSON.parse(fixedJson);
+        console.log('RESTORE: JSON repair successful');
+      } catch (repairError) {
+        console.error('RESTORE: JSON repair failed:', repairError.message);
+        
+        // Last resort - try to parse individual keys
+        console.log('RESTORE: Attempting direct key extraction');
+        try {
+          // Create a simple object from key patterns
+          const extractedData = {};
+          const keyValueRegex = /"([^"]+)"\s*:\s*("(?:\\.|[^"\\])*"|[0-9]+|true|false|null|\{[^}]*\}|\[[^\]]*\])/g;
+          let match;
+          
+          while ((match = keyValueRegex.exec(processedContent)) !== null) {
+            try {
+              const key = match[1];
+              const value = match[2];
+              extractedData[key] = JSON.parse(value);
+            } catch (e) {
+              // Skip this match if we can't parse it
+            }
+          }
+          
+          if (Object.keys(extractedData).length > 0) {
+            parsedData = extractedData;
+            console.log(`RESTORE: Extracted ${Object.keys(extractedData).length} key-value pairs directly`);
+          } else {
+            throw new Error('No valid key-value pairs found');
+          }
+        } catch (extractionError) {
+          throw new Error('Could not parse backup file - invalid JSON format');
+        }
+      }
     }
     
-    // Simple object check
-    if (!backupData || typeof backupData !== 'object') {
-      throw new Error('Invalid backup data - not an object');
-    }
+    // Rest of process remains the same...
+    let dataToStore = {};
     
-    // Check for data property (newer format)
-    let dataToRestore = backupData.data ? backupData.data : backupData;
-    console.log('Found data format:', dataToRestore ? 'valid' : 'invalid');
+    if (parsedData && parsedData.data && typeof parsedData.data === 'object') {
+      console.log('RESTORE: Found nested data property');
+      dataToStore = parsedData.data;
+    } else if (typeof parsedData === 'object' && !Array.isArray(parsedData)) {
+      console.log('RESTORE: Using direct object format');
+      dataToStore = parsedData;
+    } else if (Array.isArray(parsedData)) {
+      console.log('RESTORE: Found array data');
+      dataToStore = { 'gsm_devices': parsedData };
+    } else {
+      throw new Error('Unsupported backup format');
+    }
     
     // Clear existing data
-    console.log('Clearing existing data');
-    const keys = await AsyncStorage.getAllKeys();
-    if (keys.length > 0) {
-      await AsyncStorage.multiRemove(keys);
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      if (keys.length > 0) {
+        await AsyncStorage.multiRemove(keys);
+        console.log(`RESTORE: Cleared ${keys.length} existing keys`);
+      }
+    } catch (clearError) {
+      console.warn('RESTORE: Error clearing data:', clearError);
     }
     
-    // Restore data items one by one
-    console.log('Starting data restoration...');
-    let count = 0;
+    // Import the data
+    const entries = Object.entries(dataToStore);
+    console.log(`RESTORE: Found ${entries.length} items to restore`);
     
-    // Get all entries to restore
-    const entries = Object.entries(dataToRestore);
     if (entries.length === 0) {
-      throw new Error('No data found in backup');
+      throw new Error('Backup contains no data to restore');
     }
     
-    // Restore each item individually with appropriate error handling
+    // Log the keys we're about to restore
+    console.log('RESTORE: Keys to restore:', Object.keys(dataToStore).join(', '));
+    
+    // Save each item
+    let successCount = 0;
     for (const [key, value] of entries) {
       try {
         if (value === null || value === undefined) continue;
         
-        // Store strings directly, stringify everything else
-        const stringValue = typeof value === 'string' ? value : JSON.stringify(value);
-        await AsyncStorage.setItem(key, stringValue);
-        count++;
-        
-        // Log first few for debugging
-        if (count <= 3) {
-          console.log(`Restored: ${key}`);
-        }
-      } catch (error) {
-        console.error(`Failed to restore item [${key}]:`, error);
-        // Continue with next item
+        // Convert to string as needed
+        const valueToStore = typeof value === 'string' ? value : JSON.stringify(value);
+        await AsyncStorage.setItem(key, valueToStore);
+        successCount++;
+      } catch (itemError) {
+        console.error(`RESTORE: Failed to restore ${key}:`, itemError);
       }
     }
     
-    console.log(`Successfully restored ${count}/${entries.length} items`);
-    
-    if (count === 0) {
+    if (successCount === 0) {
       throw new Error('Failed to restore any items');
     }
     
+    console.log(`RESTORE: Successfully restored ${successCount}/${entries.length} items`);
     return true;
   } catch (error) {
-    console.error('RESTORE FAILED:', error.message);
+    console.error('RESTORE FAILED:', error);
     throw error;
   }
 };

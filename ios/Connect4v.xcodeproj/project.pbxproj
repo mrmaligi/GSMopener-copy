@@ -14,7 +14,7 @@
 		96905EF65AED1B983A6B3ABC /* libPods-Connect4v.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 58EEBF8E8E6FB1BC6CAF49B5 /* libPods-Connect4v.a */; };
 		B18059E884C0ABDD17F3DC3D /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAC715A2D49A985799AEE119 /* ExpoModulesProvider.swift */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
-		92994477CD1B4675A03744DC /* noop-file.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71F5C6CC5C9F48AAA63ECFE4 /* noop-file.swift */; };
+		7DA2860C28934BA7BDA4C768 /* noop-file.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1EB69E42A9484C8CB94BD9 /* noop-file.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,8 +31,8 @@
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		FAC715A2D49A985799AEE119 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-Connect4v/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
-		71F5C6CC5C9F48AAA63ECFE4 /* noop-file.swift */ = {isa = PBXFileReference; name = "noop-file.swift"; path = "Connect4v/noop-file.swift"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.swift; explicitFileType = undefined; includeInIndex = 0; };
-		38111F38BCC54457BC8B45CF /* Connect4v-Bridging-Header.h */ = {isa = PBXFileReference; name = "Connect4v-Bridging-Header.h"; path = "Connect4v/Connect4v-Bridging-Header.h"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; explicitFileType = undefined; includeInIndex = 0; };
+		BC1EB69E42A9484C8CB94BD9 /* noop-file.swift */ = {isa = PBXFileReference; name = "noop-file.swift"; path = "Connect4v/noop-file.swift"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.swift; explicitFileType = undefined; includeInIndex = 0; };
+		9AE80C36E67C4D66BD6DFA04 /* Connect4v-Bridging-Header.h */ = {isa = PBXFileReference; name = "Connect4v-Bridging-Header.h"; path = "Connect4v/Connect4v-Bridging-Header.h"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; explicitFileType = undefined; includeInIndex = 0; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -57,8 +57,8 @@
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				13B07FB71A68108700A75B9A /* main.m */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
-				71F5C6CC5C9F48AAA63ECFE4 /* noop-file.swift */,
-				38111F38BCC54457BC8B45CF /* Connect4v-Bridging-Header.h */,
+				BC1EB69E42A9484C8CB94BD9 /* noop-file.swift */,
+				9AE80C36E67C4D66BD6DFA04 /* Connect4v-Bridging-Header.h */,
 			);
 			name = Connect4v;
 			sourceTree = "<group>";
@@ -198,7 +198,7 @@
 				BB2F792D24A3F905000567C9 /* Expo.plist in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
-				F292985057274F4BA4F813F9 /* Connect4v-Bridging-Header.h in Resources */,
+				75D6E34638CC45EE81F9AC4F /* Connect4v-Bridging-Header.h in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -274,7 +274,7 @@
 				13B07FBC1A68108700A75B9A /* AppDelegate.mm in Sources */,
 				13B07FC11A68108700A75B9A /* main.m in Sources */,
 				B18059E884C0ABDD17F3DC3D /* ExpoModulesProvider.swift in Sources */,
-				92994477CD1B4675A03744DC /* noop-file.swift in Sources */,
+				7DA2860C28934BA7BDA4C768 /* noop-file.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

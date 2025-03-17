@@ -16,7 +16,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useDevices } from '../contexts/DeviceContext';
 import { mapIoniconName } from '../utils/iconMapping';
 import { useDataStore } from '../contexts/DataStoreContext';
-import { saveBackupToFile, shareBackup, pickAndRestoreBackup, restoreFromBackup } from '../../utils/backupRestore';
+import { saveBackupToFile, shareBackup, pickAndRestoreBackup, restoreFromBackup as restoreBackupFromFile } from '../../utils/backupRestore';
+// Import device storage constants directly
+import { DEVICES_STORAGE_KEY, ACTIVE_DEVICE_KEY } from '../../utils/deviceStorage';
 
 // Define a device interface
 interface Device {
@@ -37,7 +39,7 @@ export default function SettingsPage() {
   // Use theme context and devices context
   const { isDarkMode, setDarkMode, colors: themeColors } = useTheme();
   const { devices: deviceList, activeDevice, setActiveDeviceById, refreshDevices } = useDevices();
-  const { createBackup, restoreFromBackup, addDeviceLog, deleteDevice, store } = useDataStore();
+  const { createBackup, restoreFromBackup: restoreDataStore, addDeviceLog, deleteDevice, store } = useDataStore();
 
   useEffect(() => {
     loadSettings();
@@ -135,26 +137,57 @@ export default function SettingsPage() {
   const confirmDeleteDevice = async (deviceId: string) => {
     setIsLoading(true);
     try {
+      // Validate deviceId to prevent undefined key issues
+      if (!deviceId) {
+        console.error('Invalid deviceId: empty or undefined');
+        Alert.alert('Error', 'Invalid device ID');
+        return;
+      }
+      
       console.log(`Confirming device deletion for ID: ${deviceId}`);
       
-      // Delete the device and all associated data
+      // Try AsyncStorage direct deletion first
+      try {
+        // Get all devices from AsyncStorage
+        const devicesJson = await AsyncStorage.getItem(DEVICES_STORAGE_KEY);
+        if (devicesJson) {
+          let allDevices = JSON.parse(devicesJson);
+          
+          // Remove the target device
+          const filteredDevices = allDevices.filter(d => d.id !== deviceId);
+          
+          // Save updated device list
+          await AsyncStorage.setItem(DEVICES_STORAGE_KEY, JSON.stringify(filteredDevices));
+          
+          // Handle active device if needed
+          const activeId = await AsyncStorage.getItem(ACTIVE_DEVICE_KEY);
+          if (activeId === deviceId && filteredDevices.length > 0) {
+            // Set new active device
+            await AsyncStorage.setItem(ACTIVE_DEVICE_KEY, filteredDevices[0].id);
+          } else if (activeId === deviceId) {
+            // Clear active device
+            await AsyncStorage.removeItem(ACTIVE_DEVICE_KEY);
+          }
+        }
+      } catch (storageError) {
+        console.error('AsyncStorage deletion error:', storageError);
+      }
+      
+      // Also attempt DataStore deletion
+      console.log(`Attempting to delete device: ${deviceId}`);
       const success = await deleteDevice(deviceId);
       
-      if (success) {
-        console.log(`Device ${deviceId} deleted, refreshing devices list`);
-        // Refresh the devices list
-        await refreshDevices();
-        
-        // Update local devices state to reflect changes
-        setDevices(await deviceList || []);
-        
-        Alert.alert('Success', 'Device deleted successfully');
-      } else {
-        throw new Error('Delete operation failed');
-      }
+      // Refresh the devices list
+      await refreshDevices();
+      
+      // Update local devices state - avoid potential undefined lists
+      const updatedDevices = await deviceList || [];
+      setDevices(updatedDevices);
+      
+      Alert.alert('Success', 'Device deleted successfully');
     } catch (error) {
       console.error('Failed to delete device:', error);
-      Alert.alert('Error', 'Failed to delete device: ' + error.message);
+      Alert.alert('Error', 'Failed to delete device: ' + (error?.message || 'Unknown error'));
     } finally {
       setIsLoading(false);
     }
@@ -243,31 +276,43 @@ export default function SettingsPage() {
     try {
       console.log('Starting backup restore process...');
       
-      // Basic validation
-      if (!fileContent || fileContent.trim() === '') {
+      if (!fileContent) {
         throw new Error('Empty backup file');
       }
       
       try {
-        // Direct call to restore
-        const result = await restoreFromBackup(fileContent);
+        console.log(`Processing backup with ${fileContent.length} characters`);
         
-        // Success! Show message and reload app
-        Alert.alert(
-          'Success',
-          'Backup restored successfully! App will now reload.',
-          [{ 
-            text: 'OK',
-            onPress: () => setTimeout(() => router.replace('/'), 500)
-          }]
-        );
+        // Add a debug preview of the content
+        if (fileContent.length > 50) {
+          console.log('Content preview:', fileContent.substring(0, 50) + '...');
+        }
+        
+        // IMPORTANT: Use the file-based restore function, not the DataStore one
+        const success = await restoreBackupFromFile(fileContent);
+        
+        if (success) {
+          console.log('Restore operation successful!');
+          Alert.alert(
+            'Success',
+            'Your backup has been restored successfully! The app will now restart.',
+            [{
+              text: 'OK',
+              onPress: () => {
+                setTimeout(() => router.replace('/'), 500);
+              }
+            }]
+          );
+        } else {
+          throw new Error('Restore operation failed');
+        }
       } catch (error) {
-        console.error('Restore operation failed:', error);
-        Alert.alert('Restore Failed', error.message || 'Unknown error occurred');
+        console.error('Restore failed:', error);
+        Alert.alert('Restore Failed', `Unable to restore your backup: ${error.message}`);
       }
     } catch (error) {
       console.error('Backup process error:', error);
-      Alert.alert('Error', error.message || 'Failed to process backup file');
+      Alert.alert('Error', `Failed to process backup file: ${error.message}`);
     } finally {
       setIsRestoring(false);
     }
