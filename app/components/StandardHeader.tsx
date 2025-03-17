@@ -10,9 +10,12 @@ import { mapIoniconName } from '../utils/iconMapping';
 interface StandardHeaderProps {
   showBack?: boolean;
   backTo?: string;
-  rightAction?: React.ReactNode;
+  rightAction?: {
+    icon: string;
+    onPress: () => void;
+  } | null;
   onBackPress?: () => void;
-  title?: string; // Added title prop
+  title?: string;
 }
 
 export const StandardHeader: React.FC<StandardHeaderProps> = ({
@@ -29,7 +32,7 @@ export const StandardHeader: React.FC<StandardHeaderProps> = ({
     if (onBackPress) {
       onBackPress();
     } else if (backTo) {
-      router.replace(backTo); // Changed to replace to avoid type error
+      router.replace(backTo);
     } else {
       router.back();
     }
@@ -78,7 +81,15 @@ export const StandardHeader: React.FC<StandardHeaderProps> = ({
         </View>
 
         <View style={styles.rightSection}>
-          {rightAction}
+          {rightAction && (
+            <TouchableOpacity onPress={rightAction.onPress}>
+              <Ionicons
+                name={mapIoniconName(rightAction.icon)}
+                size={24}
+                color={colors.primary}
+              />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     </>

@@ -12,6 +12,8 @@ import { TextInputField } from './components/TextInputField';
 import { colors, spacing, borderRadius } from './styles/theme';
 import { DeviceData } from '../types/devices';
 import { useDevices } from './contexts/DeviceContext';
+import { useDataStore } from './contexts/DataStoreContext';
+import DeviceManager from '../utils/DeviceManager';
 
 export default function EditDevicePage() {
   const router = useRouter();
@@ -22,7 +24,9 @@ export default function EditDevicePage() {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const { refreshDevices } = useDevices();
+  const [isDeleting, setIsDeleting] = useState(false);
+  const { refreshDevices, devices } = useDevices();
+  const { deleteDevice } = useDataStore();
 
   useEffect(() => {
     if (deviceId) {
@@ -111,11 +115,52 @@ export default function EditDevicePage() {
       setIsSaving(false);
     }
   };
+  
+  const handleDeleteDevice = () => {
+    if (!device) return;
+    
+    // Check if this is the only device
+    const isOnlyDevice = devices.length <= 1;
+    
+    Alert.alert(
+      'Delete Device',
+      `Are you sure you want to delete "${device.name}"?${isOnlyDevice ? ' This is your only device.' : ''}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Delete', 
+          style: 'destructive',
+          onPress: async () => {
+            setIsDeleting(true);
+            try {
+              const success = await deleteDevice(device.id);
+              if (success) {
+                await refreshDevices();
+                Alert.alert(
+                  'Device Deleted',
+                  'The device has been deleted successfully',
+                  [{ text: 'OK', onPress: () => router.replace('/(tabs)') }]
+                );
+              } else {
+                throw new Error('Failed to delete device');
+              }
+            } catch (error) {
+              console.error('Failed to delete device:', error);
+              Alert.alert('Error', 'Failed to delete device. Please try again.');
+            } finally {
+              setIsDeleting(false);
+            }
+          }
+        }
+      ]
+    );
+  };
 
   if (isLoading) {
     return (
       <View style={styles.container}>
         <StandardHeader title="Edit Device" showBack />
+        
         <View style={styles.loadingContainer}>
           <Text>Loading device information...</Text>
         </View>
@@ -171,13 +216,25 @@ export default function EditDevicePage() {
           </View>
         </Card>
         
-        <Button
-          title="Save Changes"
-          onPress={handleSaveDevice}
-          loading={isSaving}
-          style={styles.saveButton}
-          fullWidth
-        />
+        <View style={styles.buttonsContainer}>
+          <Button
+            title="Save Changes"
+            onPress={handleSaveDevice}
+            loading={isSaving}
+            style={styles.saveButton}
+            fullWidth
+          />
+          
+          <Button
+            title="Delete Device"
+            onPress={handleDeleteDevice}
+            loading={isDeleting}
+            variant="secondary"
+            icon="trash-outline"
+            style={styles.deleteButton}
+            fullWidth
+          />
+        </View>
       </ScrollView>
     </View>
   );
@@ -215,7 +272,14 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: spacing.sm,
   },
-  saveButton: {
+  buttonsContainer: {
     marginTop: spacing.md,
+  },
+  saveButton: {
+    marginBottom: spacing.md,
+  },
+  deleteButton: {
+    backgroundColor: `${colors.error}15`,
+    borderColor: colors.error,
   },
 });

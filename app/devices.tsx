@@ -11,10 +11,13 @@ import { Card } from './components/Card';
 import { colors, spacing, borderRadius } from './styles/theme';
 import { addLog } from '../utils/logging';
 import { useDevices } from './contexts/DeviceContext';
+import { useDataStore } from './contexts/DataStoreContext';
+import DeviceManager from '../utils/DeviceManager';
 
 export default function DevicesPage() {
   const router = useRouter();
-  const { devices, activeDevice, setActiveDeviceById, refreshDevices, isLoading } = useDevices();
+  const { devices, activeDevice, setActiveDeviceById, refreshDevices } = useDevices();
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleSelectDevice = async (deviceId: string) => {
     try {
@@ -39,27 +42,37 @@ export default function DevicesPage() {
     });
   };
 
-  const handleDeleteDevice = async (device: DeviceData) => {
-    Alert.alert(
-      'Confirm Delete',
-      `Are you sure you want to delete ${device.name}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteDevice(device.id);
-              await addLog('Device Management', `Deleted device: ${device.name}`, true);
-              refreshDevices(); // Refresh device list after deletion
-            } catch (error) {
-              console.error('Failed to delete device:', error);
-              Alert.alert('Error', 'Failed to delete device');
-            }
+  const handleDeleteDevice = (device: DeviceData) => {
+    // Use our DeviceManager utility for consistent handling
+    DeviceManager.confirmDeviceDeletion(
+      device.id,
+      device.name,
+      device.isActive,
+      async (deviceId) => {
+        try {
+          setIsLoading(true);
+          console.log(`Devices: Deleting device ${deviceId}`);
+          
+          const success = await deleteDevice(deviceId);
+          
+          if (success) {
+            // If successful, add a log entry
+            await addLog('Device Management', `Deleted device: ${device.name}`, true);
+            
+            // Refresh the devices list
+            await refreshDevices();
+            
+            Alert.alert('Success', 'Device deleted successfully');
+          } else {
+            throw new Error('Failed to delete device');
           }
+        } catch (error) {
+          console.error('Failed to delete device:', error);
+          Alert.alert('Error', `Failed to delete device: ${error.message}`);
+        } finally {
+          setIsLoading(false);
         }
-      ]
+      }
     );
   };
 
@@ -69,8 +82,15 @@ export default function DevicesPage() {
 
   return (
     <View style={styles.container}>
-      <StandardHeader title="Manage Devices" showBack />
-      
+      <StandardHeader 
+        title="Manage Devices" 
+        showBack 
+        rightAction={{
+          icon: "add",
+          onPress: navigateToAddDevice
+        }}
+      />
+
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         <View style={styles.infoContainer}>
           <Ionicons name="information-circle-outline" size={24} color={colors.primary} style={styles.infoIcon} />
@@ -85,10 +105,11 @@ export default function DevicesPage() {
               You haven't added any devices yet. Add your first device to get started.
             </Text>
             <Button 
-              title="Add Device" 
+              title="Add Your First Device" 
               variant="solid" 
               onPress={navigateToAddDevice} 
               style={styles.addButton}
+              icon="add-circle-outline"
               fullWidth
             />
           </Card>
@@ -148,7 +169,7 @@ export default function DevicesPage() {
             ))}
             
             <Button
-              title="Add New Device"
+              title="Add Another Device" 
               variant="solid"
               onPress={navigateToAddDevice}
               style={styles.addNewButton}

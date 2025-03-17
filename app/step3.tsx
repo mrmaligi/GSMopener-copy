@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, ScrollView, Alert, Platform, Linking, TouchableOpacity, TextInput, Clipboard } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, Alert, Platform, Linking, TouchableOpacity, Clipboard } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,6 +14,7 @@ import { DeviceData } from '../types/devices';
 import { getDevices, updateDevice } from '../utils/deviceStorage';
 import { mapIoniconName } from './utils/iconMapping';
 import { useAuthorizedUsers } from './hooks/useAuthorizedUsers';
+import { useDataStore } from './contexts/DataStoreContext';
 
 interface User {
   id: string;
@@ -39,8 +40,18 @@ export default function Step3Page() {
   const [isLoading, setIsLoading] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
+  const [userCount, setUserCount] = useState(0);
 
-  const { users, setUsers, loadUsers, saveUsers } = useAuthorizedUsers(deviceId);
+  const { users, loadUsers } = useAuthorizedUsers(deviceId);
+
+  const { 
+    addUser, 
+    authorizeUserForDevice, 
+    deleteUser, 
+    deauthorizeUserForDevice,
+    addDeviceLog,
+    logSMSOperation
+  } = useDataStore();
 
   // Load data based on device context or params
   useEffect(() => {
@@ -88,6 +99,23 @@ export default function Step3Page() {
     }
   };
 
+  // When deviceId changes, load users
+  useEffect(() => {
+    if (deviceId) {
+      loadUsers().then(users => {
+        setUserCount(users.length);
+        generateNextSerial();
+      });
+    }
+  }, [deviceId]);
+
+  // Add a new effect to update user count when users array changes
+  useEffect(() => {
+    if (users) {
+      setUserCount(users.length);
+    }
+  }, [users]);
+
   const sendSMS = async (command: string) => {
     if (!unitNumber) {
       Alert.alert('Error', 'GSM relay number not set. Please configure in Step 1 first.');
@@ -120,9 +148,13 @@ export default function Step3Page() {
 
       await Linking.openURL(smsUrl);
       
-      // Log the action with masked password
-      const maskedCommand = command.replace(password, '****');
-      await addLog('User Management', `Command sent: ${maskedCommand}`, true);
+      // Use the enhanced logSMSOperation function for consistent, clear logging
+      if (deviceId) {
+        await logSMSOperation(deviceId, command);
+      } else {
+        // Log using the old method as fallback
+        await addLog('User Management', `Command sent: ${command.replace(password, '****')}`, true);
+      }
     } catch (error) {
       console.error('Failed to send SMS:', error);
       Alert.alert(
@@ -154,76 +186,28 @@ export default function Step3Page() {
     }
   };
 
-  const addUser = () => {
-    if (!newUserPhone) {
-      Alert.alert('Error', 'Please enter a phone number');
-      return;
-    }
+  const addNewUser = async () => {
+    if (!deviceId) return;
     
-    if (!newUserSerial) {
-      Alert.alert('Error', 'Please enter a serial number (001-200)');
-      return;
-    }
-    
-    // Check if phone already exists
-    if (users.some(user => user.phoneNumber === newUserPhone)) {
-      Alert.alert('Error', 'This phone number is already authorized');
-      return;
-    }
-    
-    // Validate serial number
-    let serialNumber = newUserSerial;
-    
-    // Check if serial is between 1-200
-    const serialNum = parseInt(serialNumber, 10);
-    if (isNaN(serialNum) || serialNum < 1 || serialNum > 200) {
-      Alert.alert('Error', 'Serial number must be between 1 and 200');
-      return;
-    }
-    
-    // Pad with leading zeros to make it 3 digits
-    serialNumber = serialNum.toString().padStart(3, '0');
-    
-    // Check if serial is already used
-    if (users.some(user => user.serialNumber === serialNumber)) {
-      Alert.alert('Error', 'This serial position is already in use');
-      return;
-    }
-    
-    // Validate times if provided
-    if ((newUserStartTime && !newUserEndTime) || (!newUserStartTime && newUserEndTime)) {
-      Alert.alert('Error', 'Both start and end times must be provided');
-      return;
-    }
-    
-    if (newUserStartTime && newUserEndTime) {
-      // Check format: YYMMDDHHMM (10 digits)
-      const timeRegex = /^\d{10}$/;
-      if (!timeRegex.test(newUserStartTime) || !timeRegex.test(newUserEndTime)) {
-        Alert.alert('Error', 'Time format must be YYMMDDHHMM (10 digits)');
-        return;
-      }
-    }
-    
-    // Add user locally for the current device only
-    const newUser = {
-      phoneNumber: newUserPhone.replace(/[^\d+]/g, ''), // Clean the phone number
-      name: newUserName || 'User ' + serialNumber,
-      id: (users.length + 1).toString().padStart(3, '0'),
-      serialNumber: serialNumber,
-      startTime: newUserStartTime || undefined,
-      endTime: newUserEndTime || undefined
-    };
-    
-    const updatedUsers = [...users, newUser];
-    
-    // Save users with the current device ID
-    if (deviceId) {
-      setUsers(updatedUsers);
-      saveUsers(updatedUsers);
+    try {
+      // Create the user in the DataStore
+      const newUser = await addUser({
+        name: newUserName || 'Unnamed User',
+        phoneNumber: newUserPhone,
+        serialNumber: newUserSerial,
+        startTime: newUserStartTime || undefined,
+        endTime: newUserEndTime || undefined
+      });
+      
+      // Authorize for this device
+      await authorizeUserForDevice(deviceId, newUser.id);
+      
+      // Refresh the list and update count
+      const updatedUsers = await loadUsers();
+      setUserCount(updatedUsers.length);
       
       // Create command based on provided data
-      let command = `${password}A${serialNumber}#${newUser.phoneNumber}#`;
+      let command = `${password}A${newUser.serialNumber}#${newUserPhone}#`;
       
       // Add time restrictions if provided
       if (newUserStartTime && newUserEndTime) {
@@ -233,6 +217,9 @@ export default function Step3Page() {
       // Send command to add user to device
       sendSMS(command);
       
+      // Log the action
+      await addDeviceLog(deviceId, 'User Management', `Added user: ${newUser.name}`, true);
+      
       // Clear form
       setNewUserPhone('');
       setNewUserName('');
@@ -240,43 +227,45 @@ export default function Step3Page() {
       setNewUserStartTime('');
       setNewUserEndTime('');
       
+      // Update the completedSteps in AsyncStorage
+      try {
+        const savedCompletedSteps = await AsyncStorage.getItem('completedSteps');
+        let completedSteps = savedCompletedSteps ? JSON.parse(savedCompletedSteps) : [];
+        
+        if (!completedSteps.includes('step3')) {
+          completedSteps.push('step3');
+          await AsyncStorage.setItem('completedSteps', JSON.stringify(completedSteps));
+        }
+      } catch (error) {
+        console.error('Error updating completed steps:', error);
+      }
+      
       Alert.alert('Success', 'User added successfully');
-    } else {
-      Alert.alert('Error', 'No device selected. Please set up a device first.');
+      
+      // Get next serial number for next user
+      generateNextSerial();
+    } catch (error) {
+      console.error('Failed to add user:', error);
+      Alert.alert('Error', 'Failed to add user');
     }
   };
 
-  const removeUser = (user: User) => {
-    const serialNumber = user.serialNumber || '001';
-    const phoneNumber = user.phoneNumber;
-    
-    Alert.alert(
-      'Confirm Delete',
-      'Are you sure you want to remove this user?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Remove', 
-          style: 'destructive',
-          onPress: () => {
-            // Remove user locally
-            const updatedUsers = users.filter(u => u.phoneNumber !== phoneNumber);
-            setUsers(updatedUsers);
-            saveUsers(updatedUsers);
-            
-            // Send command to remove user from device using A command with empty phone
-            sendSMS(`${password}A${serialNumber}##`);
-          }
-        }
-      ]
-    );
+  // Navigate to the authorized users list
+  const navigateToUsersList = () => {
+    if (deviceId) {
+      router.push({
+        pathname: '/authorized-users',
+        params: { deviceId }
+      });
+    } else {
+      Alert.alert('Error', 'Device ID is missing');
+    }
   };
 
   // Simplified contact handling function
   const handleContacts = async () => {
     try {
-      // For both platforms, we'll use a simpler approach
-      // First, check if there's content in the clipboard
+      // Check if there's content in the clipboard
       let clipboardContent = '';
       try {
         clipboardContent = await Clipboard.getString();
@@ -306,11 +295,10 @@ export default function Step3Page() {
 
       // Otherwise guide the user
       Alert.alert(
-        "Add Contact Number",
-        "To add a contact:\n\n1. Copy the phone number from your contacts app\n2. Return to this app\n3. Press the contacts button again to paste",
+        "Copy Phone Number",
+        "To add a phone number:\n\n1. Copy the number from your contacts or messages\n2. Return to this app\n3. Press the paste button again",
         [{ text: "OK" }]
       );
-      
     } catch (error) {
       console.error('Error with contacts:', error);
     }
@@ -321,25 +309,50 @@ export default function Step3Page() {
       <StandardHeader showBack backTo="/setup" />
       
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-        <Card title="Add Authorized User" elevated>
+        <Card title="User Management" elevated>
           <View style={styles.infoContainer}>
             <Ionicons name={mapIoniconName("information-circle-outline")} size={24} color={colors.primary} style={styles.infoIcon} />
             <Text style={styles.infoText}>
-              Add phone numbers that are authorized to control the GSM relay.
-              Serial numbers range from 001 to 200.
+              Add phone numbers that are authorized to control your device. 
+              Only these numbers will be able to send commands when "Authorized Only" mode is active.
             </Text>
           </View>
+
+          <TouchableOpacity 
+            style={styles.managementButton}
+            onPress={navigateToUsersList}
+          >
+            <View style={styles.buttonIconContainer}>
+              <Ionicons name={mapIoniconName("people")} size={24} color={colors.primary} />
+            </View>
+            <View style={styles.buttonTextContainer}>
+              <Text style={styles.buttonTitle}>Authorized Users</Text>
+              <Text style={styles.buttonDescription}>
+                View and manage all authorized users
+              </Text>
+            </View>
+            <View style={styles.buttonBadge}>
+              <Text style={styles.buttonBadgeText}>{userCount}</Text>
+            </View>
+            <Ionicons name={mapIoniconName("chevron-forward")} size={18} color={colors.text.secondary} />
+          </TouchableOpacity>
           
-          <TextInputField
-            label="Serial Number (001-200)"
-            value={newUserSerial}
-            onChangeText={setNewUserSerial}
-            placeholder="Position number (001-200)"
-            keyboardType="number-pad"
-            maxLength={3}
-            info="Position to store the authorized user in device memory"
-            required
-          />
+          <View style={styles.divider} />
+          
+          <Text style={styles.sectionTitle}>Quick Add User</Text>
+          
+          <View style={styles.serialInputContainer}>
+            <TextInputField
+              label="Serial Position (001-200)"
+              value={newUserSerial}
+              onChangeText={setNewUserSerial}
+              placeholder="Position number (e.g., 001)"
+              keyboardType="number-pad"
+              maxLength={3}
+              info="Position to store in device memory"
+              containerStyle={styles.serialInput}
+            />
+          </View>
           
           <View style={styles.phoneInputContainer}>
             <TextInputField
@@ -381,6 +394,11 @@ export default function Step3Page() {
           
           {showAdvanced && (
             <View style={styles.advancedOptions}>
+              <Text style={styles.advancedTitle}>Time Restrictions</Text>
+              <Text style={styles.advancedDescription}>
+                Optionally restrict when this user can access the device by setting start and end times.
+              </Text>
+              
               <View style={styles.timeRow}>
                 <View style={styles.timeInput}>
                   <TextInputField
@@ -415,64 +433,24 @@ export default function Step3Page() {
           
           <Button
             title="Add User"
-            onPress={addUser}
+            onPress={addNewUser}
             loading={isLoading}
             disabled={!newUserPhone || !newUserSerial}
             icon={<Ionicons name={mapIoniconName("person-add-outline")} size={20} color="white" />}
+            style={styles.addButton}
             fullWidth
           />
         </Card>
         
-        <Card title="Authorized Users">
-          {users.length === 0 ? (
-            <Text style={styles.emptyText}>No authorized users yet.</Text>
-          ) : (
-            users.map((user, index) => (
-              <View 
-                // Create truly unique keys by including a UUID-like combination of properties
-                key={`user_${index}_${user.id || ''}_${user.serialNumber || ''}_${user.phoneNumber?.slice(-4) || Math.random().toString(36).substring(7)}`} 
-                style={[
-                  styles.userItem,
-                  index < users.length - 1 && styles.userItemBorder
-                ]}
-              >
-                <View style={styles.userInfo}>
-                  <View style={styles.userHeader}>
-                    <Text style={styles.userName}>{user.name}</Text>
-                    <Text style={styles.userSerial}>#{user.serialNumber || (index + 1).toString().padStart(3, '0')}</Text>
-                  </View>
-                  <Text style={styles.userPhone}>{user.phoneNumber}</Text>
-                  
-                  {user.startTime && user.endTime && (
-                    <Text style={styles.userAccess}>
-                      Access: {user.startTime} to {user.endTime}
-                    </Text>
-                  )}
-                </View>
-                <TouchableOpacity
-                  style={styles.deleteButton}
-                  onPress={() => removeUser(user)}
-                >
-                  <Ionicons name={mapIoniconName("trash-outline")} size={22} color={colors.error} />
-                </TouchableOpacity>
-              </View>
-            ))
-          )}
-          
-          <TouchableOpacity 
-            style={styles.viewAllButton}
-            onPress={() => router.push('/authorized-users-list')}
-          >
-            <Text style={styles.viewAllButtonText}>View All Users</Text>
-            <Ionicons name={mapIoniconName("chevron-forward-outline")} size={18} color={colors.primary} />
-          </TouchableOpacity>
-        </Card>
-        
         <Button
-          title="Continue to Next Step"
+          title="Continue to Device Settings"
           variant="secondary"
-          onPress={() => router.push('/step4')}
+          onPress={() => router.push({
+            pathname: '/step4',
+            params: deviceId ? { deviceId } : {}
+          })}
           style={styles.nextButton}
+          icon={<Ionicons name={mapIoniconName("arrow-forward")} size={20} color={colors.primary} />}
           fullWidth
         />
       </ScrollView>
@@ -509,76 +487,53 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
     lineHeight: 20,
   },
-  emptyText: {
+  divider: {
+    height: 1,
+    backgroundColor: colors.border,
+    marginVertical: spacing.md,
+  },
+  sectionTitle: {
     fontSize: 16,
-    color: colors.text.secondary,
-    textAlign: 'center',
-    padding: spacing.md,
-  },
-  userItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-  },
-  userItemBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  userInfo: {
-    flex: 1,
-  },
-  userHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 2,
-  },
-  userName: {
-    fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
     color: colors.text.primary,
-  },
-  userSerial: {
-    backgroundColor: `${colors.primary}15`,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    fontSize: 14,
-    fontWeight: '500',
-    color: colors.primary,
-  },
-  userPhone: {
-    fontSize: 14,
-    color: colors.text.secondary,
-    marginBottom: 2,
-  },
-  userAccess: {
-    fontSize: 14,
-    color: colors.text.secondary,
-    fontStyle: 'italic',
-    marginTop: 2,
-  },
-  deleteButton: {
-    padding: spacing.sm,
+    marginBottom: spacing.sm,
   },
   nextButton: {
     marginTop: spacing.lg,
   },
-  viewAllButton: {
+  phoneInputContainer: {
     flexDirection: 'row',
+    alignItems: 'flex-end',
+    marginBottom: spacing.md,
+  },
+  phoneInput: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  serialInputContainer: {
+    marginBottom: spacing.sm,
+  },
+  serialInput: {
+    marginBottom: spacing.sm,
+  },
+  contactButton: {
+    backgroundColor: `${colors.primary}15`,
+    padding: 8,
+    borderRadius: borderRadius.md,
+    marginLeft: 8,
+    marginBottom: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 16,
-    padding: 8,
-    backgroundColor: '#f0f8ff',
-    borderRadius: 8,
+    minWidth: 70,
   },
-  viewAllButtonText: {
+  smallButtonText: {
     color: colors.primary,
+    fontSize: 10,
     fontWeight: '600',
-    marginRight: 4,
-    fontSize: 16,
+    marginTop: 2,
+  },
+  addButton: {
+    marginTop: spacing.sm,
   },
   advancedToggle: {
     flexDirection: 'row',
@@ -603,6 +558,17 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: colors.primary,
   },
+  advancedTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text.primary,
+    marginBottom: 4,
+  },
+  advancedDescription: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    marginBottom: 12,
+  },
   timeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -617,29 +583,46 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: 'center',
   },
-  phoneInputContainer: {
+  managementButton: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    marginBottom: spacing.md,
-  },
-  phoneInput: {
-    flex: 1,
-    marginBottom: 0,
-  },
-  contactButton: {
-    backgroundColor: `${colors.primary}15`,
-    padding: 8,
-    borderRadius: borderRadius.md,
-    marginLeft: 8,
-    marginBottom: 8,
     alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: 70,
+    padding: spacing.md,
+    backgroundColor: `${colors.surfaceVariant}50`,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  smallButtonText: {
-    color: colors.primary,
-    fontSize: 10,
+  buttonIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: `${colors.primary}15`,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: spacing.md,
+  },
+  buttonTextContainer: {
+    flex: 1,
+  },
+  buttonTitle: {
+    fontSize: 16,
     fontWeight: '600',
-    marginTop: 2,
+    color: colors.text.primary,
+  },
+  buttonDescription: {
+    fontSize: 14,
+    color: colors.text.secondary,
+  },
+  buttonBadge: {
+    backgroundColor: colors.primary,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    marginRight: spacing.sm,
+  },
+  buttonBadgeText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

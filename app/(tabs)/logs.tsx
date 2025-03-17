@@ -1,67 +1,58 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, View, Text, FlatList, RefreshControl, Alert, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, Text, FlatList, RefreshControl, Alert } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { colors, spacing, borderRadius } from '../styles/theme';
-import { getDeviceLogs, clearDeviceLogs } from '../../utils/logger';
 import { StandardHeader } from '../components/StandardHeader';
 import { useDevices } from '../contexts/DeviceContext';
-
-interface LogEntry {
-  id: string;
-  timestamp: string;
-  action: string;
-  details: string;
-  success: boolean;
-  deviceId?: string;
-}
+import { useDataStore } from '../contexts/DataStoreContext';
+import { LogEntry } from '../../utils/DataStore';
 
 export default function LogsPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const { activeDevice } = useDevices();
+  const { getDeviceLogs, clearDeviceLogs } = useDataStore();
 
-  const loadLogs = async () => {
-    // If activeDevice exists, get device-specific logs
-    // otherwise fall back to all logs (legacy behavior)
-    const fetchedLogs = await getDeviceLogs(activeDevice?.id);
-    setLogs(fetchedLogs);
-  };
+  const loadLogs = useCallback(async () => {
+    if (!activeDevice) return;
+    
+    try {
+      const deviceLogs = await getDeviceLogs(activeDevice.id);
+      setLogs(deviceLogs.sort((a, b) => 
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      ));
+    } catch (error) {
+      console.error('Failed to load logs:', error);
+    }
+  }, [activeDevice, getDeviceLogs]);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await loadLogs();
-    setRefreshing(false);
-  };
-
-  // Load logs when screen comes into focus
   useFocusEffect(
     useCallback(() => {
       loadLogs();
-    }, [activeDevice]) // Reload logs when active device changes
+    }, [loadLogs])
   );
 
-  // Initial load
-  useEffect(() => {
-    loadLogs();
-  }, [activeDevice]); // Reload logs when active device changes
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadLogs();
+    setRefreshing(false);
+  }, [loadLogs]);
 
   const handleClearLogs = () => {
+    if (!activeDevice) return;
+    
     Alert.alert(
       'Clear Logs',
-      activeDevice
-        ? `Are you sure you want to clear all logs for ${activeDevice.name}?`
-        : 'Are you sure you want to clear all logs? This cannot be undone.',
+      `Are you sure you want to clear all logs for ${activeDevice.name}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         { 
           text: 'Clear', 
           style: 'destructive', 
           onPress: async () => {
-            // Clear logs for the active device (or all if no active device)
-            await clearDeviceLogs(activeDevice?.id);
+            await clearDeviceLogs(activeDevice.id);
             setLogs([]);
           } 
         }
@@ -74,38 +65,72 @@ export default function LogsPage() {
     return date.toLocaleString();
   };
 
-  const renderLogItem = ({ item }: { item: LogEntry }) => (
-    <Card style={[styles.logItem, { borderLeftColor: item.success ? colors.success : colors.error }]}>
-      <View style={styles.logItemContent}>
-        <View style={styles.logHeader}>
-          <Text style={styles.logAction}>{item.action}</Text>
-          <Text style={styles.logTime}>{formatDate(item.timestamp)}</Text>
+  const renderLogItem = ({ item }: { item: LogEntry }) => {
+    // Determine icon and color based on category
+    let icon = "document-text-outline";
+    let iconColor = colors.text.secondary;
+    let borderColor = colors.border;
+    
+    switch(item.category) {
+      case 'relay':
+        icon = item.action.toLowerCase().includes('open') ? "lock-open" : "lock-closed";
+        iconColor = item.success ? colors.success : colors.error;
+        borderColor = item.success ? colors.success : colors.error;
+        break;
+      case 'User Management':
+        icon = "people";
+        iconColor = colors.primary;
+        borderColor = colors.primary;
+        break;
+      case 'Device Management':
+        icon = "hardware-chip";
+        iconColor = colors.warning;
+        borderColor = colors.warning;
+        break;
+      default:
+        icon = "information-circle";
+    }
+
+    return (
+      <View style={[
+        styles.logItem, 
+        { borderLeftColor: borderColor }
+      ]}>
+        <View style={styles.logItemContent}>
+          <View style={styles.logHeader}>
+            <Text style={styles.logAction}>{item.action}</Text>
+            <Text style={styles.logTime}>{formatDate(item.timestamp)}</Text>
+          </View>
+          {item.details && <Text style={styles.logDetails}>{item.details}</Text>}
         </View>
-        <Text style={styles.logDetails}>{item.details}</Text>
       </View>
-    </Card>
-  );
+    );
+  };
 
   return (
     <View style={styles.container}>
-      <StandardHeader />
+      <StandardHeader title="Activity Logs" />
       
-      <View style={styles.deviceInfo}>
-        <Text style={styles.deviceInfoText}>
-          {activeDevice 
-            ? `Logs for device: ${activeDevice.name} (${activeDevice.unitNumber})`
-            : 'All logs (no device selected)'}
-        </Text>
-      </View>
+      {activeDevice && (
+        <View style={styles.deviceBanner}>
+          <Text style={styles.deviceInfoText}>
+            Showing logs for: {activeDevice.name}
+          </Text>
+        </View>
+      )}
       
       <FlatList
         data={logs}
         renderItem={renderLogItem}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item, index) => `${item.timestamp}-${index}`}
         contentContainerStyle={styles.logList}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Ionicons name="document-text-outline" size={64} color={colors.text.disabled} />
+            <Ionicons 
+              name="list-outline" 
+              size={64} 
+              color={colors.text.disabled} 
+            />
             <Text style={styles.emptyText}>No logs found</Text>
           </View>
         }
@@ -115,12 +140,12 @@ export default function LogsPage() {
       />
       
       {logs.length > 0 && (
-        <View style={styles.buttonContainer}>
+        <View style={styles.footer}>
           <Button 
             title="Clear Logs" 
+            onPress={handleClearLogs} 
+            variant="secondary"
             icon="trash-outline"
-            onPress={handleClearLogs}
-            variant="outline"
           />
         </View>
       )}
@@ -133,7 +158,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  deviceInfo: {
+  deviceBanner: {
     backgroundColor: colors.surfaceVariant,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
@@ -147,11 +172,14 @@ const styles = StyleSheet.create({
   },
   logList: {
     padding: spacing.md,
+    paddingBottom: 80, // Space for footer
   },
   logItem: {
     marginBottom: spacing.sm,
     borderLeftWidth: 4,
     padding: spacing.sm,
+    backgroundColor: colors.surfaceVariant,
+    borderRadius: borderRadius.sm,
   },
   logItemContent: {
     marginLeft: spacing.xs,
@@ -162,7 +190,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs,
   },
   logAction: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: colors.text.primary,
   },
@@ -184,9 +212,15 @@ const styles = StyleSheet.create({
     color: colors.text.disabled,
     marginTop: spacing.md,
   },
-  buttonContainer: {
+  footer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     padding: spacing.md,
+    backgroundColor: colors.background,
     borderTopWidth: 1,
     borderTopColor: colors.border,
+    alignItems: 'center',
   },
 });

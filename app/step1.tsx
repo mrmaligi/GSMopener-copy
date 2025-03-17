@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { StyleSheet, View, Text, ScrollView, Alert, Platform, Linking } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StandardHeader } from './components/StandardHeader';
@@ -8,45 +7,92 @@ import { Card } from './components/Card';
 import { Button } from './components/Button';
 import { TextInputField } from './components/TextInputField';
 import { colors, spacing, shadows, borderRadius } from './styles/theme';
-import { addLog } from '../utils/logging';
 import { useDevices } from './contexts/DeviceContext';
 import { DeviceData } from '../types/devices';
-import { getDevices, updateDevice } from '../utils/deviceStorage';
 import { mapIoniconName } from './utils/iconMapping';
+import { useDataStore } from './contexts/DataStoreContext';
 
 export default function Step1Page() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { activeDevice, refreshDevices } = useDevices();
   const [device, setDevice] = useState<DeviceData | null>(null);
+  const [deviceId, setDeviceId] = useState<string | null>(null); // Added deviceId state
   const [unitNumber, setUnitNumber] = useState('');
   const [password, setPassword] = useState('1234');
   const [adminNumber, setAdminNumber] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [deviceName, setDeviceName] = useState('My Gate Opener');
 
+  // Use our DataStore with more complete methods
+  const { 
+    store, 
+    isLoading: storeLoading,
+    getDeviceById,
+    addDevice, 
+    updateDevice, 
+    addDeviceLog,
+    logSMSOperation, // Add this import 
+    updateGlobalSettings,
+    refreshStore 
+  } = useDataStore();
+  
   // Load data based on device context or params
-  useEffect(() => {
-    if (params.deviceId) {
-      loadDeviceById(String(params.deviceId));
-    } else if (activeDevice) {
-      setDevice(activeDevice);
-      setUnitNumber(activeDevice.unitNumber);
-      setPassword(activeDevice.password);
-      loadAdminNumber();
-    } else {
-      loadLegacySettings();
+  const loadData = useCallback(async () => {
+    // Wait for store to be fully loaded
+    if (storeLoading) {
+      return;
     }
-  }, [params.deviceId, activeDevice]);
+
+    try {
+      // Refresh store to ensure we have latest data
+      await refreshStore();
+
+      if (params.deviceId) {
+        const id = String(params.deviceId);
+        setDeviceId(id); // Set deviceId when loading from params
+        await loadDeviceById(id);
+      } else if (activeDevice) {
+        setDevice(activeDevice);
+        setDeviceId(activeDevice.id); // Set deviceId from active device
+        setUnitNumber(activeDevice.unitNumber);
+        setPassword(activeDevice.password);
+        setDeviceName(activeDevice.name || 'My Gate Opener');
+        loadAdminNumber();
+      } else {
+        // No device yet - set defaults
+        setDeviceId(null); // Clear deviceId
+        setDeviceName('My Gate Opener');
+        setPassword('1234');
+        // Load admin number if available
+        loadAdminNumber();
+      }
+    } catch (error) {
+      console.error('Failed to load data:', error);
+      Alert.alert('Error', 'Failed to load data. Please try again.');
+    }
+  }, [storeLoading, params.deviceId, activeDevice, refreshStore]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const loadDeviceById = async (deviceId: string) => {
     try {
-      const devices = await getDevices();
-      const foundDevice = devices.find(d => d.id === deviceId);
+      const foundDevice = getDeviceById(deviceId);
       
       if (foundDevice) {
-        setDevice(foundDevice);
+        setDevice({
+          ...foundDevice,
+          id: foundDevice.id,
+          type: 'Connect4v', // Ensure it matches DeviceData type
+          isActive: store.globalSettings.activeDeviceId === foundDevice.id
+        } as DeviceData);
+        
+        setDeviceId(foundDevice.id); // Set deviceId when loading device by id
         setUnitNumber(foundDevice.unitNumber);
         setPassword(foundDevice.password);
+        setDeviceName(foundDevice.name || 'My Gate Opener');
         loadAdminNumber();
       }
     } catch (error) {
@@ -54,57 +100,62 @@ export default function Step1Page() {
     }
   };
 
-  const loadAdminNumber = async () => {
-    try {
-      const savedAdminNumber = await AsyncStorage.getItem('adminNumber');
-      if (savedAdminNumber) setAdminNumber(savedAdminNumber);
-    } catch (error) {
-      console.error('Failed to load admin number:', error);
-    }
-  };
-
-  const loadLegacySettings = async () => {
-    try {
-      const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
-      const savedPassword = await AsyncStorage.getItem('password');
-      const savedAdminNumber = await AsyncStorage.getItem('adminNumber');
-
-      if (savedUnitNumber) setUnitNumber(savedUnitNumber);
-      if (savedPassword) setPassword(savedPassword);
-      if (savedAdminNumber) setAdminNumber(savedAdminNumber);
-    } catch (error) {
-      console.error('Failed to load settings:', error);
+  const loadAdminNumber = () => {
+    if (!storeLoading) {
+      setAdminNumber(store.globalSettings.adminNumber || '');
     }
   };
 
   const saveToLocalStorage = async () => {
     try {
-      // Save to device if we have one
+      // If we have a device, update it
       if (device) {
-        const updatedDevice = {
-          ...device,
+        console.log(`Step1: Updating device ${device.id}`);
+        const updatedDevice = await updateDevice(device.id, {
+          name: deviceName,
           unitNumber,
           password
-        };
-        await updateDevice(updatedDevice);
-        await refreshDevices();
+        });
+        
+        if (updatedDevice) {
+          await refreshDevices();
+        }
       } else {
-        // Legacy storage
-        await AsyncStorage.setItem('unitNumber', unitNumber);
-        await AsyncStorage.setItem('password', password);
+        // Create a new device
+        console.log("Step1: Creating new device");
+        const newDevice = await addDevice({
+          name: deviceName,
+          unitNumber: unitNumber,
+          password: password,
+          authorizedUsers: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+        
+        console.log(`Step1: New device created with ID: ${newDevice.id}`);
+        
+        // Set as active device if we don't have one
+        if (!store.globalSettings.activeDeviceId) {
+          await updateGlobalSettings({
+            activeDeviceId: newDevice.id
+          });
+        }
+        
+        // Refresh devices list
+        await refreshDevices();
       }
       
-      // Admin number is stored separately
-      await AsyncStorage.setItem('adminNumber', adminNumber);
+      // Update admin number in global settings
+      await updateGlobalSettings({ 
+        adminNumber: adminNumber,
+        // Add step1 to completed steps if not already there
+        completedSteps: store.globalSettings.completedSteps.includes('step1') 
+          ? store.globalSettings.completedSteps 
+          : [...store.globalSettings.completedSteps, 'step1']
+      });
       
-      // Mark step as completed
-      const savedCompletedSteps = await AsyncStorage.getItem('completedSteps');
-      let completedSteps = savedCompletedSteps ? JSON.parse(savedCompletedSteps) : [];
-      
-      if (!completedSteps.includes('step1')) {
-        completedSteps.push('step1');
-        await AsyncStorage.setItem('completedSteps', JSON.stringify(completedSteps));
-      }
+      // Refresh store to update UI
+      await refreshStore();
       
       Alert.alert('Success', 'Settings saved successfully');
     } catch (error) {
@@ -138,30 +189,23 @@ export default function Step1Page() {
           'SMS is not available on this device. Please ensure an SMS app is installed.',
           [{ text: 'OK' }]
         );
-        await addLog('Initial Setup', 'Failed: SMS not available on device', false);
+        
+        if (device) {
+          await addDeviceLog(
+            device.id,
+            'Initial Setup', 
+            'Failed: SMS not available on device', 
+            false
+          );
+        }
         return;
       }
 
       await Linking.openURL(smsUrl);
       
-      // Log with device ID if available
-      if (command.includes('TEL')) {
-        // Extract phone number from command: pwdTELphone#
-        const phoneMatch = command.match(/\d{4}TEL([0-9+]+)#/);
-        const phone = phoneMatch ? phoneMatch[1] : adminNumber;
-        await addLog(
-          'Admin Registration', 
-          `Registered admin number ${phone}`, 
-          true,
-          device?.id // Pass device ID to the log
-        );
-      } else if (command.includes('EE')) {
-        await addLog(
-          'Status Check',
-          'Requested device status', 
-          true,
-          device?.id // Pass device ID to the log
-        );
+      // Use the logSMSOperation function for consistent logging
+      if (device) {
+        await logSMSOperation(device.id, command, true);
       }
     } catch (error) {
       console.error('Failed to send SMS:', error);
@@ -170,7 +214,15 @@ export default function Step1Page() {
         'Failed to open SMS. Please try again.',
         [{ text: 'OK' }]
       );
-      await addLog('Initial Setup', `Error: ${error.message}`, false, device?.id);
+      
+      if (device) {
+        await addDeviceLog(
+          device.id,
+          'Initial Setup', 
+          `Error: ${error.message}`, 
+          false
+        );
+      }
     } finally {
       setIsLoading(false);
     }
@@ -218,16 +270,27 @@ export default function Step1Page() {
 
   return (
     <View style={styles.container}>
-      <StandardHeader showBack backTo="/setup" />
+      <StandardHeader showBack backTo={deviceId ? "/devices" : "/setup"} />
       
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-        <Card title="Configure Your GSM Opener" elevated>
+        <Card title={device ? `Configure ${device.name}` : "Configure Your GSM Opener"} elevated>
           <View style={styles.infoContainer}>
             <Ionicons name={mapIoniconName("information-circle-outline")} size={24} color={colors.primary} style={styles.infoIcon} />
             <Text style={styles.infoText}>
-              Enter the phone number of your GSM relay device. The default password is usually "1234".
+              Enter the phone number of your GSM relay device and give it a name for easy identification.
             </Text>
           </View>
+          
+          {/* Only show Device Name Input if not already set from add device page */}
+          {!device && (
+            <TextInputField
+              label="Device Name"
+              value={deviceName}
+              onChangeText={setDeviceName}
+              placeholder="Enter a name for this device"
+              containerStyle={styles.inputContainer}
+            />
+          )}
           
           <TextInputField
             label="GSM Relay Phone Number"
@@ -284,7 +347,7 @@ export default function Step1Page() {
             </Text>
             
             <Button
-              title="Register Admin Number"
+              title="Register Admin & Save Settings"
               onPress={registerAdminNumber}
               loading={isLoading}
               disabled={!adminNumber || !unitNumber}
@@ -294,9 +357,7 @@ export default function Step1Page() {
             />
           </View>
           
-          <View style={styles.divider} />
-          
-          <View style={styles.actionContainer}>
+          <View style={styles.testConnectionContainer}>
             <Button
               title="Test Connection"
               variant="secondary"
@@ -304,16 +365,7 @@ export default function Step1Page() {
               loading={isLoading}
               disabled={!unitNumber}
               icon={<Ionicons name="pulse-outline" size={20} color={colors.primary} />}
-              style={styles.actionButton}
-            />
-            
-            <Button
-              title="Save Settings"
-              onPress={saveToLocalStorage}
-              loading={isLoading}
-              disabled={!unitNumber}
-              icon={<Ionicons name="save-outline" size={20} color="white" />}
-              style={styles.actionButton}
+              fullWidth
             />
           </View>
         </Card>
@@ -333,6 +385,18 @@ export default function Step1Page() {
             </Text>
           </View>
         </Card>
+        
+        <Button
+          title="Continue to Change Password"
+          variant="secondary"
+          onPress={() => router.push({
+            pathname: '/step2',
+            params: deviceId ? { deviceId } : {}
+          })}
+          style={styles.continueButton}
+          icon={<Ionicons name={mapIoniconName("arrow-forward")} size={20} color={colors.primary} />}
+          fullWidth
+        />
       </ScrollView>
     </View>
   );
@@ -437,6 +501,7 @@ const styles = StyleSheet.create({
   },
   helpCard: {
     marginTop: spacing.lg,
+    marginBottom: spacing.lg,
   },
   helpItem: {
     flexDirection: 'row',
@@ -461,5 +526,11 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.sm,
     marginTop: spacing.xs,
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  continueButton: {
+    marginBottom: spacing.xl,
+  },
+  testConnectionContainer: {
+    marginTop: spacing.md,
   },
 });

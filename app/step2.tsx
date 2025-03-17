@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, ScrollView, Alert, Platform, Linking } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { useState, useEffect, useCallback } from 'react';
+import { StyleSheet, View, Text, ScrollView, Alert, Platform, Linking, ActivityIndicator } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StandardHeader } from './components/StandardHeader';
@@ -8,11 +7,10 @@ import { Card } from './components/Card';
 import { Button } from './components/Button';
 import { TextInputField } from './components/TextInputField';
 import { colors, spacing, shadows, borderRadius } from './styles/theme';
-import { addLog } from '../utils/logging';
 import { useDevices } from './contexts/DeviceContext';
 import { DeviceData } from '../types/devices';
-import { getDevices, updateDevice } from '../utils/deviceStorage';
 import { mapIoniconName } from './utils/iconMapping';
+import { useDataStore } from './contexts/DataStoreContext';
 
 export default function Step2Page() {
   const router = useRouter();
@@ -20,86 +18,160 @@ export default function Step2Page() {
   const { activeDevice, refreshDevices } = useDevices();
   const [device, setDevice] = useState<DeviceData | null>(null);
   const [unitNumber, setUnitNumber] = useState('');
-  const [password, setPassword] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
+  const [isLoadingData, setIsLoadingData] = useState(true);
+
+  // Use our DataStore with all needed methods
+  const { 
+    store, 
+    isLoading: storeLoading,
+    getDeviceById, 
+    updateDevice, 
+    addDeviceLog,
+    logSMSOperation,
+    updateGlobalSettings,
+    refreshStore
+  } = useDataStore();
 
   // Load data based on device context or params
-  useEffect(() => {
-    if (params.deviceId) {
-      loadDeviceById(String(params.deviceId));
-    } else if (activeDevice) {
-      setDevice(activeDevice);
-      setUnitNumber(activeDevice.unitNumber);
-      setPassword(activeDevice.password);
-    } else {
-      loadLegacySettings();
+  const loadDeviceData = useCallback(async () => {
+    // If store is still loading, wait
+    if (storeLoading) {
+      return;
     }
-  }, [params.deviceId, activeDevice]);
+    
+    setIsLoadingData(true);
+    console.log("Step2: Loading device data...");
+    
+    try {
+      // Ensure we have latest data
+      await refreshStore();
+      
+      let currentDeviceId: string | undefined = undefined;
+      
+      if (params.deviceId) {
+        currentDeviceId = String(params.deviceId);
+        console.log(`Step2: Loading device by ID: ${currentDeviceId}`);
+        await loadDeviceById(currentDeviceId);
+      } else if (activeDevice) {
+        console.log(`Step2: Using active device: ${activeDevice.id}`);
+        currentDeviceId = activeDevice.id;
+        setDevice(activeDevice);
+        setUnitNumber(activeDevice.unitNumber);
+        setCurrentPassword(activeDevice.password);
+      } else {
+        console.log("Step2: No device found");
+      }
+      
+      setDeviceId(currentDeviceId);
+    } catch (error) {
+      console.error('Step2: Failed to load device data:', error);
+      Alert.alert('Error', 'Failed to load device data. Please try again.');
+    } finally {
+      setIsLoadingData(false);
+    }
+  }, [storeLoading, params.deviceId, activeDevice, refreshStore]);
+  
+  // Load device data when dependencies change
+  useEffect(() => {
+    loadDeviceData();
+  }, [loadDeviceData]);
 
   const loadDeviceById = async (deviceId: string) => {
     try {
-      const devices = await getDevices();
-      const foundDevice = devices.find(d => d.id === deviceId);
+      const foundDevice = getDeviceById(deviceId);
       
       if (foundDevice) {
-        setDevice(foundDevice);
+        setDevice({
+          ...foundDevice,
+          id: foundDevice.id,
+          type: 'Connect4v', // Ensure it matches DeviceData type
+          isActive: store.globalSettings.activeDeviceId === foundDevice.id
+        } as DeviceData);
+        
         setUnitNumber(foundDevice.unitNumber);
-        setPassword(foundDevice.password);
+        setCurrentPassword(foundDevice.password);
       }
     } catch (error) {
       console.error('Failed to load device:', error);
     }
   };
 
-  const loadLegacySettings = async () => {
-    try {
-      const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
-      const savedPassword = await AsyncStorage.getItem('password');
-
-      if (savedUnitNumber) setUnitNumber(savedUnitNumber);
-      if (savedPassword) setPassword(savedPassword);
-    } catch (error) {
-      console.error('Failed to load settings:', error);
+  const validatePasswords = () => {
+    if (!newPassword) {
+      Alert.alert('Error', 'Please enter a new password');
+      return false;
     }
+    
+    if (newPassword !== confirmPassword) {
+      Alert.alert('Error', 'Passwords do not match');
+      return false;
+    }
+    
+    if (newPassword.length !== 4 || !/^\d+$/.test(newPassword)) {
+      Alert.alert('Error', 'Password must be exactly 4 digits');
+      return false;
+    }
+    
+    return true;
   };
 
-  const saveToLocalStorage = async (newPwd: string): Promise<boolean> => {
+  const savePassword = async () => {
+    if (!validatePasswords() || !deviceId) return;
+
     try {
-      // Update device if available, otherwise use legacy storage
-      if (device) {
-        const updatedDevice = {
-          ...device,
-          password: newPwd
-        };
-        await updateDevice(updatedDevice);
+      // Update device with new password
+      const updatedDevice = await updateDevice(deviceId, {
+        password: newPassword
+      });
+      
+      if (updatedDevice) {
         await refreshDevices();
-      } else {
-        await AsyncStorage.setItem('password', newPwd);
+        
+        // Mark step as completed
+        await updateGlobalSettings({ 
+          completedSteps: store.globalSettings.completedSteps.includes('step2') 
+            ? store.globalSettings.completedSteps 
+            : [...store.globalSettings.completedSteps, 'step2']
+        });
       }
       
-      // Mark step as completed
-      const savedCompletedSteps = await AsyncStorage.getItem('completedSteps');
-      let completedSteps = savedCompletedSteps ? JSON.parse(savedCompletedSteps) : [];
+      // Add log
+      await addDeviceLog(
+        deviceId,
+        'Password Change',
+        'Device password updated in app',
+        true
+      );
+
+      // Now automatically send the command to update the device
+      sendPasswordChangeCommand();
       
-      if (!completedSteps.includes('step2')) {
-        completedSteps.push('step2');
-        await AsyncStorage.setItem('completedSteps', JSON.stringify(completedSteps));
-      }
-      
-      return true;
     } catch (error) {
-      console.error('Failed to save settings:', error);
-      return false;
+      console.error('Failed to save password:', error);
+      Alert.alert('Error', 'Failed to save new password');
     }
   };
 
-  const sendSMS = async (command) => {
+  const sendPasswordChangeCommand = () => {
+    if (!unitNumber || !currentPassword || !newPassword) {
+      Alert.alert('Error', 'Missing required information');
+      return;
+    }
+
+    // Format: current-password P new-password new-password #
+    const command = `${currentPassword}P${newPassword}${newPassword}#`;
+    sendSMS(command);
+  };
+
+  const sendSMS = async (command: string) => {
     if (!unitNumber) {
-      Alert.alert('Error', 'GSM relay number not set. Please configure in Settings first.');
-      await addLog('Password Change', 'Failed: GSM relay number not set', false);
-      return false;
+      Alert.alert('Error', 'Please enter the GSM relay number first');
+      return;
     }
 
     setIsLoading(true);
@@ -121,71 +193,44 @@ export default function Step2Page() {
           'SMS is not available on this device. Please ensure an SMS app is installed.',
           [{ text: 'OK' }]
         );
-        setIsLoading(false);
-        await addLog('Password Change', 'Failed: SMS not available on device', false);
-        return false;
+        
+        if (deviceId) {
+          await addDeviceLog(
+            deviceId,
+            'Password Change', 
+            'Failed: SMS not available on device', 
+            false,
+            'settings'
+          );
+        }
+        return;
       }
 
       await Linking.openURL(smsUrl);
       
-      // Extract new password from command (format: oldPwdPnewPwd)
-      const newPwdMatch = command.match(/\d{4}P(\d{4})/);
-      const newPwd = newPwdMatch ? newPwdMatch[1] : "****";
-      
-      // Log password change with masked passwords
-      await addLog(
-        'Password Change', 
-        `Changed device password to ${newPwd}`, 
-        true
-      );
-      
-      setIsLoading(false);
-      return true;
+      // Use the logSMSOperation function for consistent logging
+      if (deviceId) {
+        await logSMSOperation(deviceId, command);
+      }
     } catch (error) {
       console.error('Failed to send SMS:', error);
-      await addLog('Password Change', `Error: ${error.message}`, false);
-      setIsLoading(false);
-      return false;
-    }
-  };
-
-  // Change Password
-  const changePassword = async () => {
-    // Validate inputs
-    if (!newPassword || newPassword.length !== 4 || !/^\d+$/.test(newPassword)) {
-      Alert.alert('Error', 'New password must be 4 digits');
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
-      return;
-    }
-
-    // Send SMS command to change password
-    const smsSent = await sendSMS(`${password}P${newPassword}`);
-    
-    if (smsSent) {
-      // Update local storage with new password
-      const savedSuccessfully = await saveToLocalStorage(newPassword);
+      Alert.alert(
+        'Error',
+        'Failed to open SMS. Please try again.',
+        [{ text: 'OK' }]
+      );
       
-      if (savedSuccessfully) {
-        setPassword(newPassword);
-        setNewPassword('');
-        setConfirmPassword('');
-        
-        // Show success message and navigate back to setup
-        Alert.alert(
-          'Success',
-          'Password change command sent. The GSM relay password has been updated.',
-          [{ text: 'OK', onPress: () => router.push('/setup') }]
-        );
-      } else {
-        Alert.alert(
-          'Warning',
-          'Command sent but failed to save password locally. You may need to update it in settings.'
+      if (deviceId) {
+        await addDeviceLog(
+          deviceId,
+          'Password Change', 
+          `Error: ${error.message}`, 
+          false,
+          'settings'
         );
       }
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -193,76 +238,102 @@ export default function Step2Page() {
     <View style={styles.container}>
       <StandardHeader showBack backTo="/setup" />
       
-      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
-        <Card title="Change Admin Password" subtitle="Update the 4-digit password for the GSM relay" elevated>
-          <View style={styles.infoContainer}>
-            <Ionicons name={mapIoniconName("information-circle-outline")} size={24} color={colors.primary} style={styles.infoIcon} />
-            <Text style={styles.infoText}>
-              This will change the password on your GSM relay device. Make sure to remember your new password.
-            </Text>
-          </View>
-
-          <TextInputField
-            label="Current Password"
-            value={password}
-            editable={false}
-            containerStyle={styles.inputContainer}
-          />
-
-          <TextInputField
-            label="New Password (4 digits)"
-            value={newPassword}
-            onChangeText={(text) => {
-              // Only allow 4 digits
-              const filtered = text.replace(/[^0-9]/g, '').slice(0, 4);
-              setNewPassword(filtered);
-            }}
-            placeholder="Enter new 4-digit password"
-            keyboardType="number-pad"
-            maxLength={4}
-            secureTextEntry
-            containerStyle={styles.inputContainer}
-          />
-
-          <TextInputField
-            label="Confirm New Password"
-            value={confirmPassword}
-            onChangeText={(text) => {
-              // Only allow 4 digits
-              const filtered = text.replace(/[^0-9]/g, '').slice(0, 4);
-              setConfirmPassword(filtered);
-            }}
-            placeholder="Re-enter new password"
-            keyboardType="number-pad"
-            maxLength={4}
-            secureTextEntry
-            containerStyle={styles.inputContainer}
-            error={
-              confirmPassword && newPassword !== confirmPassword 
-                ? "Passwords don't match" 
-                : undefined
-            }
-            touched={!!confirmPassword}
-          />
-
+      {(storeLoading || isLoadingData) ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>Loading...</Text>
+        </View>
+      ) : (
+        <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+          <Card title="Change Device Password" elevated>
+            <View style={styles.infoContainer}>
+              <Ionicons name={mapIoniconName("information-circle-outline")} size={24} color={colors.primary} style={styles.infoIcon} />
+              <Text style={styles.infoText}>
+                Change your GSM relay password. Password must be 4 digits. This will update both the app and the device.
+              </Text>
+            </View>
+            
+            <TextInputField
+              label="Current Password"
+              value={currentPassword}
+              onChangeText={setCurrentPassword}
+              placeholder="Current 4-digit password"
+              keyboardType="number-pad"
+              maxLength={4}
+              secureTextEntry
+              editable={false}
+              info="Your current password as stored in the app"
+            />
+            
+            <TextInputField
+              label="New Password"
+              value={newPassword}
+              onChangeText={(text) => {
+                // Only allow 4 digits
+                const filtered = text.replace(/[^0-9]/g, '').slice(0, 4);
+                setNewPassword(filtered);
+              }}
+              placeholder="Enter new 4-digit password"
+              keyboardType="number-pad"
+              maxLength={4}
+              secureTextEntry
+            />
+            
+            <TextInputField
+              label="Confirm New Password"
+              value={confirmPassword}
+              onChangeText={(text) => {
+                // Only allow 4 digits
+                const filtered = text.replace(/[^0-9]/g, '').slice(0, 4);
+                setConfirmPassword(filtered);
+              }}
+              placeholder="Enter new password again"
+              keyboardType="number-pad"
+              maxLength={4}
+              secureTextEntry
+              error={newPassword && confirmPassword && newPassword !== confirmPassword ? "Passwords don't match" : undefined}
+            />
+            
+            <Button
+              title="Change Password"
+              onPress={savePassword}
+              disabled={!newPassword || !confirmPassword || newPassword !== confirmPassword || newPassword.length !== 4}
+              icon={<Ionicons name="key-outline" size={20} color="white" />}
+              style={styles.changeButton}
+              loading={isLoading}
+              fullWidth
+            />
+          </Card>
+          
+          <Card title="Password Requirements" style={styles.helpCard}>
+            <View style={styles.helpItem}>
+              <Ionicons name={mapIoniconName("information-circle-outline")} size={24} color={colors.primary} style={styles.helpIcon} />
+              <Text style={styles.helpText}>
+                The password must be exactly 4 digits (0-9).
+              </Text>
+            </View>
+            
+            <View style={styles.helpItem}>
+              <Ionicons name={mapIoniconName("warning-outline")} size={24} color={colors.warning} style={styles.helpIcon} />
+              <Text style={styles.helpText}>
+                After changing the password, all authorized users must use the new password when sending commands.
+              </Text>
+            </View>
+          </Card>
+          
           <Button
-            title="Update Password"
-            onPress={changePassword}
-            loading={isLoading}
-            disabled={!newPassword || newPassword.length !== 4 || newPassword !== confirmPassword}
-            style={styles.updateButton}
+            title="Continue to User Management"
+            variant="secondary"
+            onPress={() => router.push({
+              pathname: '/step3',
+              params: deviceId ? { deviceId } : {}
+            })}
+            style={styles.nextButton}
+            icon={<Ionicons name={mapIoniconName("arrow-forward")} size={20} color={colors.primary} />}
             fullWidth
           />
-
-          <Button
-            title="Cancel"
-            onPress={() => router.push('/setup')}
-            variant="outline"
-            style={styles.cancelButton}
-            fullWidth
-          />
-        </Card>
-      </ScrollView>
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -277,6 +348,7 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     padding: spacing.md,
+    paddingBottom: spacing.xxl,
   },
   infoContainer: {
     flexDirection: 'row',
@@ -295,13 +367,51 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
     lineHeight: 20,
   },
-  inputContainer: {
-    marginBottom: spacing.sm,
-  },
-  updateButton: {
+  buttonContainer: {
     marginTop: spacing.md,
   },
-  cancelButton: {
-    marginTop: spacing.sm,
+  saveButton: {
+    marginBottom: spacing.md,
+  },
+  changeButton: {
+    marginBottom: spacing.sm,
+  },
+  stepText: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
+  },
+  helpCard: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.lg,
+  },
+  helpItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: spacing.md,
+  },
+  helpIcon: {
+    marginRight: spacing.md,
+    marginTop: 2,
+  },
+  helpText: {
+    flex: 1,
+    fontSize: 14,
+    color: colors.text.secondary,
+    lineHeight: 20,
+  },
+  nextButton: {
+    marginBottom: spacing.lg,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: spacing.md,
+    fontSize: 16,
+    color: colors.text.secondary,
   },
 });

@@ -13,6 +13,7 @@ import { useDevices } from './contexts/DeviceContext';
 import { DeviceData } from '../types/devices';
 import { getDevices, updateDevice } from '../utils/deviceStorage';
 import { mapIoniconName } from './utils/iconMapping';
+import { useDataStore } from './contexts/DataStoreContext';
 
 export default function Step4Page() {
   const router = useRouter();
@@ -21,19 +22,25 @@ export default function Step4Page() {
   const [device, setDevice] = useState<DeviceData | null>(null);
   const [unitNumber, setUnitNumber] = useState('');
   const [password, setPassword] = useState('');
+  const [deviceId, setDeviceId] = useState<string | null>(null);
   const [relaySettings, setRelaySettings] = useState({
     accessControl: 'AUT',  // AUT (only authorized) or ALL (anyone can control)
     latchTime: '000',      // Relay latch time in seconds (000-999)
   });
   const [isLoading, setIsLoading] = useState(false);
+  // Fix missing imports by adding logSMSOperation
+  const { addDeviceLog, logSMSOperation } = useDataStore();
 
   // Load appropriate device data
   useEffect(() => {
     if (params.deviceId) {
       // Load specific device if ID provided
-      loadDeviceById(String(params.deviceId));
+      const id = String(params.deviceId);
+      setDeviceId(id);
+      loadDeviceById(id);
     } else if (activeDevice) {
       // Otherwise use active device
+      setDeviceId(activeDevice.id);
       setDevice(activeDevice);
       setUnitNumber(activeDevice.unitNumber);
       setPassword(activeDevice.password);
@@ -110,65 +117,44 @@ export default function Step4Page() {
   };
 
   const sendSMS = async (command: string) => {
-    if (!unitNumber) {
-      Alert.alert('Error', 'GSM relay number not set. Please configure in Step 1 first.');
-      await addLog('Relay Settings', 'Failed: GSM relay number not set', false);
+    if (!deviceId || !unitNumber) {
+      Alert.alert('Error', 'Device information missing');
       return;
     }
-    
+
     setIsLoading(true);
-    
+
     try {
-      const formattedUnitNumber = Platform.OS === 'ios' ? unitNumber.replace('+', '') : unitNumber;
+      const formattedUnitNumber = Platform.OS === 'ios' ? 
+        unitNumber.replace('+', '') : unitNumber;
+
       const smsUrl = Platform.select({
         ios: `sms:${formattedUnitNumber}&body=${encodeURIComponent(command)}`,
         android: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
         default: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`
       });
-      
+
       const supported = await Linking.canOpenURL(smsUrl);
       if (!supported) {
-        Alert.alert('Error', 'SMS is not available on this device');
-        await addLog('Relay Settings', 'Failed: SMS not available on device', false);
-        setIsLoading(false);
-        return;
+        throw new Error('SMS is not available on this device');
       }
-      
+
       await Linking.openURL(smsUrl);
       
-      // Log with specific action and details based on command
-      if (command.includes('AUT')) {
-        await addLog(
-          'Access Control', 
-          'Set relay to allow only authorized callers', 
-          true
-        );
-      } else if (command.includes('ALL')) {
-        await addLog(
-          'Access Control', 
-          'Set relay to allow all callers', 
-          true
-        );
-      } else if (command.includes('GOT')) {
-        const latchTime = relaySettings.latchTime;
-        let details = "";
-        
-        if (latchTime === '000') {
-          details = 'Set relay to momentary mode (pulse)';
-        } else if (latchTime === '999') {
-          details = 'Set relay to toggle mode (stays ON until next call)';
-        } else {
-          details = `Set relay to close for ${parseInt(latchTime)} seconds`;
-        }
-        
-        await addLog('Relay Timing', details, true);
-      }
+      // Log the SMS operation with appropriate categorization
+      await logSMSOperation(deviceId, command, true);
       
-      setIsLoading(false);
     } catch (error) {
       console.error('Failed to send SMS:', error);
-      await addLog('Relay Settings', `Error: ${error.message}`, false);
+      await addDeviceLog(
+        deviceId,
+        'SMS Error',
+        `Failed to send command: ${error.message}`,
+        false,
+        'relay'
+      );
       Alert.alert('Error', `Failed to send SMS: ${error.message}`);
+    } finally {
       setIsLoading(false);
     }
   };
@@ -305,8 +291,12 @@ export default function Step4Page() {
         <Button
           title="Complete Setup"
           variant="secondary"
-          onPress={() => router.push('/setup')}
+          onPress={() => router.push({
+            pathname: '/(tabs)',  // Changed from '/setup' to '/(tabs)' to navigate to the main tabs (home)
+            params: deviceId ? { deviceId } : {}
+          })}
           style={styles.completeButton}
+          icon={<Ionicons name={mapIoniconName("checkmark-circle")} size={20} color={colors.primary} />}
           fullWidth
         />
       </ScrollView>

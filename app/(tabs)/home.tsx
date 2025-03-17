@@ -10,10 +10,13 @@ import { StandardHeader } from '../components/StandardHeader';
 import { useRouter } from 'expo-router';
 import { DeviceData } from '../../types/devices';
 import { useDevices } from '../contexts/DeviceContext';
+import { useDataStore } from '../contexts/DataStoreContext';
+import { useFocusEffect } from '@react-navigation/native';
 
 export default function HomePage() {
   const router = useRouter();
   const { devices, activeDevice, setActiveDeviceById, refreshDevices, isLoading } = useDevices();
+  const { addDeviceLog, logSMSOperation, getDeviceLogs } = useDataStore();
   const [unitNumber, setUnitNumber] = useState('');
   const [password, setPassword] = useState('');
   const [isSendingSms, setIsSendingSms] = useState(false);
@@ -24,11 +27,45 @@ export default function HomePage() {
     if (activeDevice) {
       setUnitNumber(activeDevice.unitNumber);
       setPassword(activeDevice.password);
+      
+      // Load the most recent log for the active device
+      fetchMostRecentLog(activeDevice.id);
     } else {
       // Fall back to legacy method if no active device
       loadLegacySettings();
     }
   }, [activeDevice]);
+  
+  // Fetch the most recent log whenever we focus the page or after actions
+  useFocusEffect(
+    React.useCallback(() => {
+      if (activeDevice) {
+        fetchMostRecentLog(activeDevice.id);
+      }
+    }, [activeDevice])
+  );
+
+  const fetchMostRecentLog = async (deviceId: string) => {
+    try {
+      // Get the latest logs for the device
+      const logs = await getDeviceLogs(deviceId);
+      
+      // Sort by timestamp (newest first) and take the most recent one
+      const sortedLogs = logs.sort((a, b) => 
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+      
+      if (sortedLogs.length > 0) {
+        const latest = sortedLogs[0];
+        setLastAction({
+          action: latest.action,
+          timestamp: new Date(latest.timestamp)
+        });
+      }
+    } catch (error) {
+      console.error('Failed to fetch recent logs:', error);
+    }
+  };
   
   const loadLegacySettings = async () => {
     try {
@@ -43,24 +80,7 @@ export default function HomePage() {
   };
   
   const handleAddDevice = () => {
-    Alert.alert(
-      'Add New Device',
-      'Select device type to add',
-      [
-        {
-          text: 'Add Connect4v',
-          onPress: () => handleAddConnect4v()
-        },
-        {
-          text: 'Add Phonic4v (Coming Soon)',
-          onPress: () => handleAddPhonic4v()
-        },
-        {
-          text: 'Cancel',
-          style: 'cancel'
-        }
-      ]
-    );
+    router.push('/device-add');
   };
   
   const handleAddConnect4v = () => {
@@ -129,29 +149,39 @@ export default function HomePage() {
 
       await Linking.openURL(smsUrl);
       
-      // Use better action descriptions
-      let actionName = "";
-      let actionDetails = "";
-      
-      if (command.includes('CC')) {
-        actionName = "Gate Open";
-        actionDetails = "Opened gate/activated relay (ON)";
-      } else if (command.includes('DD')) {
-        actionName = "Gate Close";
-        actionDetails = "Closed gate/deactivated relay (OFF)";
-      } else if (command.includes('EE')) {
-        actionName = "Status Check";
-        actionDetails = "Requested device status";
+      // Use the enhanced logSMSOperation function for clearer logs
+      if (activeDevice?.id) {
+        await logSMSOperation(activeDevice.id, command);
+        
+        // Fetch the most recent log after sending a command to update the UI
+        setTimeout(() => {
+          fetchMostRecentLog(activeDevice.id);
+        }, 500); // Small delay to allow the log to be saved
+      } else {
+        // Fallback to the old method
+        let actionName = "";
+        let actionDetails = "";
+        
+        if (command.includes('CC')) {
+          actionName = "Gate Open";
+          actionDetails = "Opened gate/activated relay (ON)";
+        } else if (command.includes('DD')) {
+          actionName = "Gate Close";
+          actionDetails = "Closed gate/deactivated relay (OFF)";
+        } else if (command.includes('EE')) {
+          actionName = "Status Check";
+          actionDetails = "Requested device status";
+        }
+        
+        await addLog(actionName, actionDetails, true);
+        
+        // Update last action manually here since we don't fetch logs
+        setLastAction({
+          action: getActionName(command),
+          timestamp: new Date(),
+        });
       }
-      
-      await addLog(actionName, actionDetails, true);
-      
-      // Record last action
-      setLastAction({
-        action: getActionName(command),
-        timestamp: new Date(),
-      });
-    } catch (error: any) { // Type as 'any' to handle error.message
+    } catch (error: any) {
       console.error('Failed to send SMS:', error);
       Alert.alert(
         'Error',
@@ -179,34 +209,64 @@ export default function HomePage() {
   return (
     <View style={styles.container}>
       <StandardHeader 
-        rightAction={
-          <TouchableOpacity onPress={handleAddDevice} style={styles.addButton}>
-            <Ionicons name="add" size={28} color={colors.primary} />
-          </TouchableOpacity>
-        }
+        title="Gate Control"
       />
 
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         {/* Active Device Card */}
-        <Card title="Active Device" elevated>
+        <Card title="Control Panel" elevated>
           {activeDevice ? (
-            <View style={styles.activeDeviceContainer}>
-              <View style={styles.deviceHeader}>
-                <Text style={styles.deviceName}>{activeDevice.name}</Text>
-                <TouchableOpacity 
-                  style={styles.manageButton} 
-                  onPress={goToDeviceManagement}
-                >
-                  <Text style={styles.manageButtonText}>Manage</Text>
+            <>
+              <Text style={styles.deviceName}>
+                {activeDevice.name}
+                <View style={styles.deviceActions}>
+                  <TouchableOpacity 
+                    onPress={() => router.push({
+                      pathname: '/device-edit',
+                      params: { deviceId: activeDevice.id }
+                    })}
+                    style={styles.deviceAction}
+                  >
+                    <Ionicons name="create-outline" size={16} color={colors.primary} />
+                  </TouchableOpacity>
+                  {devices.length > 1 && (
+                    <TouchableOpacity 
+                      onPress={goToDeviceManagement}
+                      style={styles.deviceAction}
+                    >
+                      <Ionicons name="swap-horizontal-outline" size={16} color={colors.text.secondary} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <Text style={styles.devicePhone}> • {activeDevice.unitNumber}</Text>
+              </Text>
+              
+              <View style={styles.actionGrid}>
+                <TouchableOpacity style={styles.actionButton} onPress={turnRelayOn}>
+                  <View style={[styles.iconContainer, { backgroundColor: colors.primary }]}>
+                    <Ionicons name="lock-open" size={28} color="white" />
+                  </View>
+                  <Text style={styles.actionText}>Open</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.actionButton} onPress={turnRelayOff}>
+                  <View style={[styles.iconContainer, { backgroundColor: colors.error }]}>
+                    <Ionicons name="lock-closed" size={28} color="white" />
+                  </View>
+                  <Text style={styles.actionText}>Close</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.actionButton} onPress={checkStatus}>
+                  <View style={[styles.iconContainer, { backgroundColor: colors.warning }]}>
+                    <Ionicons name="information-circle" size={28} color="white" />
+                  </View>
+                  <Text style={styles.actionText}>Status</Text>
                 </TouchableOpacity>
               </View>
-              <Text style={styles.devicePhone}>
-                <Ionicons name="call-outline" size={16} /> {activeDevice.unitNumber}
-              </Text>
               
               {devices.length > 1 && (
                 <View style={styles.otherDevicesSection}>
-                  <Text style={styles.otherDevicesLabel}>Switch to:</Text>
+                  <Text style={styles.sectionLabel}>Other Devices:</Text>
                   <ScrollView 
                     horizontal 
                     showsHorizontalScrollIndicator={false}
@@ -227,76 +287,57 @@ export default function HomePage() {
                   </ScrollView>
                 </View>
               )}
-            </View>
+            </>
           ) : (
             <View style={styles.emptyDeviceContainer}>
-              <Text style={styles.emptyDeviceText}>No devices configured yet</Text>
+              <Text style={styles.emptyDeviceText}>Add your first device to get started</Text>
               <Button
-                title="Add Device"
+                title="Device Management"
                 variant="solid"
-                onPress={handleAddDevice}
+                onPress={() => router.push('/(tabs)/settings')}
                 style={styles.emptyDeviceButton}
               />
             </View>
           )}
         </Card>
 
-        {/* Quick Actions Card */}
-        <Card title="Quick Actions" elevated>
-          <View style={styles.actionGrid}>
-            <TouchableOpacity style={styles.actionButton} onPress={turnRelayOn}>
-              <View style={[styles.iconContainer, { backgroundColor: colors.primary }]}>
-                <Ionicons name="power" size={28} color="white" />
-              </View>
-              <Text style={styles.actionText}>Open Gate</Text>
+        {activeDevice && (
+          <Card title="Recent Activity">
+            <View style={styles.statusRow}>
+              <Ionicons name="time-outline" size={20} color={colors.text.secondary} />
+              <Text style={styles.statusValue}>
+                {lastAction 
+                  ? `${lastAction.action} at ${lastAction.timestamp.toLocaleTimeString()}`
+                  : 'No recent activity'}
+              </Text>
+            </View>
+            <TouchableOpacity 
+              style={styles.viewLogsButton}
+              onPress={() => router.push('/(tabs)/logs')}
+            >
+              <Text style={styles.viewLogsText}>View All Logs</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.primary} />
             </TouchableOpacity>
-
-            <TouchableOpacity style={styles.actionButton} onPress={turnRelayOff}>
-              <View style={[styles.iconContainer, { backgroundColor: colors.error }]}>
-                <Ionicons name="close-circle" size={28} color="white" />
+          </Card>
+        )}
+        
+        {activeDevice && (
+          <Card title="Setup & Configuration">
+            <TouchableOpacity 
+              style={styles.setupButton}
+              onPress={() => router.push('/(tabs)/setup')}
+            >
+              <Ionicons name="settings-outline" size={24} color={colors.primary} />
+              <View style={styles.setupTextContainer}>
+                <Text style={styles.setupTitle}>Device Configuration</Text>
+                <Text style={styles.setupDescription}>
+                  Manage users, change password and device settings
+                </Text>
               </View>
-              <Text style={styles.actionText}>Close Gate</Text>
+              <Ionicons name="chevron-forward" size={18} color={colors.text.secondary} />
             </TouchableOpacity>
-
-            <TouchableOpacity style={styles.actionButton} onPress={checkStatus}>
-              <View style={[styles.iconContainer, { backgroundColor: colors.warning }]}>
-                <Ionicons name="information-circle" size={28} color="white" />
-              </View>
-              <Text style={styles.actionText}>Check Status</Text>
-            </TouchableOpacity>
-          </View>
-        </Card>
-
-        {/* Status Card */}
-        <Card title="Device Status" subtitle="Information about your GSM relay">
-          <View style={styles.statusRow}>
-            <Ionicons name="call" size={20} color={colors.text.secondary} />
-            <Text style={styles.statusLabel}>Phone Number:</Text>
-            <Text style={styles.statusValue}>{unitNumber || 'Not set'}</Text>
-          </View>
-          
-          <View style={styles.statusRow}>
-            <Ionicons name="time" size={20} color={colors.text.secondary} />
-            <Text style={styles.statusLabel}>Last Action:</Text>
-            <Text style={styles.statusValue}>
-              {lastAction 
-                ? `${lastAction.action} at ${lastAction.timestamp.toLocaleTimeString()}`
-                : 'No recent activity'}
-            </Text>
-          </View>
-        </Card>
-
-        {/* Help Card */}
-        <Card 
-          title="Need Help?" 
-          subtitle="Tap for support options"
-          onPress={() => {}} // Would navigate to help screen
-        >
-          <Text style={styles.helpText}>
-            If you're having trouble connecting to your GSM relay or need assistance with setup,
-            tap here for troubleshooting guides and support options.
-          </Text>
-        </Card>
+          </Card>
+        )}
       </ScrollView>
     </View>
   );
@@ -313,13 +354,23 @@ const styles = StyleSheet.create({
   contentContainer: {
     padding: spacing.md,
   },
-  addButton: {
-    padding: 8,
+  deviceName: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: colors.text.primary,
+    marginBottom: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+  },
+  devicePhone: {
+    fontSize: 16,
+    color: colors.text.secondary,
   },
   actionGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: spacing.sm,
+    marginBottom: spacing.md,
   },
   actionButton: {
     alignItems: 'center',
@@ -335,72 +386,34 @@ const styles = StyleSheet.create({
     ...shadows.sm,
   },
   actionText: {
-    fontSize: 14,
+    fontSize: 16,
+    fontWeight: '500',
     color: colors.text.primary,
-    marginTop: 4,
     textAlign: 'center',
   },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 12,
-  },
-  statusLabel: {
-    fontSize: 16,
-    color: colors.text.primary,
-    marginLeft: 8,
-    width: 120,
+    paddingVertical: 4,
   },
   statusValue: {
     fontSize: 16,
     color: colors.text.secondary,
+    marginLeft: 12,
     flex: 1,
   },
-  helpText: {
-    fontSize: 14,
-    color: colors.text.secondary,
-    lineHeight: 20,
-  },
-  activeDeviceContainer: {
-    paddingVertical: spacing.sm,
-  },
-  deviceHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.xs,
-  },
-  deviceName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.text.primary,
-  },
-  devicePhone: {
-    fontSize: 16,
-    color: colors.text.secondary,
-    marginBottom: spacing.sm,
-  },
-  manageButton: {
-    backgroundColor: colors.surfaceVariant,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs / 2,
-    borderRadius: borderRadius.pill,
-  },
-  manageButtonText: {
-    fontSize: 12,
-    color: colors.primary,
-    fontWeight: '500',
-  },
   otherDevicesSection: {
-    marginTop: spacing.sm,
-    paddingTop: spacing.sm,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
     borderTopWidth: 1,
     borderTopColor: colors.border,
   },
-  otherDevicesLabel: {
+  sectionLabel: {
     fontSize: 14,
+    fontWeight: '500',
+    marginBottom: 8,
     color: colors.text.secondary,
-    marginBottom: spacing.xs,
   },
   devicesList: {
     flexDirection: 'row',
@@ -421,14 +434,53 @@ const styles = StyleSheet.create({
   },
   emptyDeviceContainer: {
     alignItems: 'center',
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.xl,
   },
   emptyDeviceText: {
     fontSize: 16,
     color: colors.text.secondary,
     marginBottom: spacing.md,
+    textAlign: 'center',
   },
   emptyDeviceButton: {
-    minWidth: 150,
+    minWidth: 180,
+  },
+  viewLogsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  viewLogsText: {
+    color: colors.primary,
+    fontWeight: '500',
+    marginRight: 4,
+  },
+  setupButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+  },
+  setupTextContainer: {
+    flex: 1,
+    marginLeft: spacing.sm,
+  },
+  setupTitle: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: colors.text.primary,
+  },
+  setupDescription: {
+    fontSize: 14,
+    color: colors.text.secondary,
+  },
+  deviceActions: {
+    flexDirection: 'row',
+    marginLeft: spacing.sm,
+  },
+  deviceAction: {
+    padding: 4,
+    marginHorizontal: 2,
   },
 });
