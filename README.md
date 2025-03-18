@@ -34,3 +34,6 @@ Now, from your terminal run the following commands in order:
 4. To build and run your app:
    - For Android: `npx expo run:android`
    - For iOS: `npx expo run:ios`
+
+
+   eas build -p android

@@ -1,5 +1,7 @@
 import React from 'react';
 import { Svg, Path } from 'react-native-svg';
+import { Ionicons } from '@expo/vector-icons';
+import { mapIoniconName } from '../utils/iconMapping';
 
 interface IconProps {
   color?: string;
@@ -21,3 +23,18 @@ export function Gate({ color = 'currentColor', size = 24, strokeWidth = 2 }: Ico
     </Svg>
   );
 }
+
+interface CustomIconProps {
+  name: string;
+  size?: number;
+  color?: string;
+}
+
+// A wrapper around Ionicons with name mapping
+export function CustomIcon({ name, size = 24, color = 'black' }: CustomIconProps) {
+  const mappedName = mapIoniconName(name);
+  return <Ionicons name={mappedName as any} size={size} color={color} />;
+}
+
+// Export as default for expo-router compatibility
+export default CustomIcon;

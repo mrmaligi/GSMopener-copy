@@ -1,98 +1,486 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView } from 'react-native';
+import { StyleSheet, View, Text, ScrollView, Switch, Platform, Alert, Share, TouchableOpacity } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Header from '../components/Header';
-import { useFocusEffect } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { useRouter } from 'expo-router';
+import { Card } from '../components/Card';
+import { Button } from '../components/Button';
+import { colors, spacing, shadows, borderRadius } from '../styles/theme';
+import { useTheme } from '../contexts/ThemeContext';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import { addLog } from '../utils/logger';
+import { StandardHeader } from '../components/StandardHeader';
+import { Ionicons } from '@expo/vector-icons';
+import { useDevices } from '../contexts/DeviceContext';
+import { mapIoniconName } from '../utils/iconMapping';
+import { useDataStore } from '../contexts/DataStoreContext';
+import { saveBackupToFile, shareBackup, pickAndRestoreBackup, restoreFromBackup as restoreBackupFromFile } from '../../utils/backupRestore';
+// Import device storage functions and constants
+import { DEVICES_STORAGE_KEY, ACTIVE_DEVICE_KEY, getDevices } from '../../utils/deviceStorage';
+// Import DeviceManager
+import DeviceManager from '../../utils/DeviceManager';
+
+// Define a device interface
+interface Device {
+  id: string;
+  name: string;
+  unitNumber: string;
+  type: string;
+}
 
 export default function SettingsPage() {
-  const [unitNumber, setUnitNumber] = useState('');
-  const [password, setPassword] = useState('1234');
-  const [relaySettings, setRelaySettings] = useState({
-    accessControl: 'AUT',
-    latchTime: '000',
-  });
+  const router = useRouter();
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [isCreatingBackup, setIsCreatingBackup] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  // Use theme context and devices context
+  const { isDarkMode, setDarkMode, colors: themeColors } = useTheme();
+  const { devices: deviceList, activeDevice, setActiveDeviceById, refreshDevices } = useDevices();
+  const { createBackup, restoreFromBackup: restoreDataStore, addDeviceLog, deleteDevice, store, refreshStore } = useDataStore();
 
   useEffect(() => {
-    loadData();
-    if (!unitNumber) {
-      setUnitNumber('+1234567890'); // Temporary test number
-      AsyncStorage.setItem('unitNumber', '+1234567890');
+    loadSettings();
+    // Set devices from the DeviceContext
+    if (deviceList) {
+      setDevices(deviceList);
     }
-  }, []);
+  }, [deviceList]);
 
-  const loadData = async () => {
+  const loadSettings = async () => {
     try {
-      const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
-      const savedPassword = await AsyncStorage.getItem('password');
-      const savedRelaySettings = await AsyncStorage.getItem('relaySettings');
-
-      if (savedUnitNumber) setUnitNumber(savedUnitNumber);
-      if (savedPassword) setPassword(savedPassword);
-      if (savedRelaySettings) setRelaySettings(JSON.parse(savedRelaySettings));
+      const storedNotifications = await AsyncStorage.getItem('notificationsEnabled');
+      if (storedNotifications) setNotificationsEnabled(storedNotifications === 'true');
     } catch (error) {
-      console.error('Error loading data:', error);
+      console.error('Failed to load settings:', error);
     }
   };
 
-  useFocusEffect(
-    React.useCallback(() => {
-      loadData();
-    }, [])
-  );
-
-  const saveToLocalStorage = async () => {
+  const saveNotificationSetting = async (value) => {
+    setNotificationsEnabled(value);
     try {
-      await AsyncStorage.setItem('unitNumber', unitNumber);
-      await AsyncStorage.setItem('password', password);
-      await AsyncStorage.setItem('relaySettings', JSON.stringify(relaySettings));
-      alert('Settings saved successfully!');
+      await AsyncStorage.setItem('notificationsEnabled', value.toString());
     } catch (error) {
-      console.error('Error saving data:', error);
-      alert('Failed to save settings');
+      console.error('Failed to save notification setting:', error);
+    }
+  };
+
+  // Device Management Functions
+  const handleAddDevice = () => {
+    router.push('/device-add');
+  };
+
+  const handleEditDevice = (deviceId: string) => {
+    // Make sure we're passing deviceId as a parameter, not in the URL query
+    router.push({
+      pathname: '/device-edit',
+      params: { deviceId }
+    });
+  };
+
+  const handleSetActiveDevice = async (deviceId: string) => {
+    try {
+      await setActiveDeviceById(deviceId);
+      Alert.alert('Success', 'Active device changed successfully');
+    } catch (error) {
+      console.error('Failed to change active device:', error);
+      Alert.alert('Error', 'Failed to change active device');
+    }
+  };
+
+  const handleManageDevices = () => {
+    router.push('/devices');
+  };
+
+  // Add function to remove a device
+  const removeDevice = async (deviceId: string) => {
+    try {
+      // First check if this is the active device
+      if (activeDevice && activeDevice.id === deviceId) {
+        Alert.alert(
+          'Active Device',
+          'You are trying to delete the currently active device. This will remove all data associated with this device. Do you want to continue?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { 
+              text: 'Delete', 
+              style: 'destructive', 
+              onPress: async () => {
+                await confirmDeleteDevice(deviceId);
+              } 
+            }
+          ]
+        );
+      } else {
+        Alert.alert(
+          'Delete Device',
+          'Are you sure you want to delete this device? All associated data will be permanently removed.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { 
+              text: 'Delete', 
+              style: 'destructive', 
+              onPress: async () => {
+                await confirmDeleteDevice(deviceId);
+              } 
+            }
+          ]
+        );
+      }
+    } catch (error) {
+      console.error('Failed to remove device:', error);
+      Alert.alert('Error', 'Failed to remove device');
+    }
+  };
+  
+  const confirmDeleteDevice = async (deviceId: string) => {
+    setIsLoading(true);
+    try {
+      // Add more validation to prevent undefined key issues
+      if (!deviceId || typeof deviceId !== 'string') {
+        console.error('Invalid deviceId: empty or undefined');
+        Alert.alert('Error', 'Invalid device ID');
+        setIsLoading(false);
+        return;
+      }
+      
+      console.log(`Confirming device deletion for ID: ${deviceId}`);
+      
+      try {
+        // Check if DeviceManager is available and is a valid object
+        if (!DeviceManager || typeof DeviceManager.deleteDevice !== 'function') {
+          console.error('DeviceManager is not available or invalid');
+          
+          // Fallback to direct deletion using DataStore
+          const success = await deleteDevice(deviceId);
+          
+          if (success) {
+            // Refresh the devices list
+            await refreshDevices();
+            
+            // Update local devices state
+            const updatedDevices = await getDevices() || [];
+            setDevices(updatedDevices);
+            
+            Alert.alert('Success', 'Device deleted successfully');
+          } else {
+            throw new Error('Failed to delete device');
+          }
+        } else {
+          // Use DeviceManager to handle deletion properly
+          const success = await DeviceManager.deleteDevice(deviceId);
+          
+          if (success) {
+            // Refresh the devices list
+            await refreshDevices();
+            
+            // Update local devices state
+            const updatedDevices = await getDevices() || [];
+            setDevices(updatedDevices);
+            
+            Alert.alert('Success', 'Device deleted successfully');
+          } else {
+            throw new Error('Failed to delete device using DeviceManager');
+          }
+        }
+      } catch (error) {
+        console.error('Failed to delete device:', error);
+        Alert.alert('Error', 'Failed to delete device: ' + (error?.message || 'Unknown error'));
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Backup and restore functions
+  const handleCreateBackup = async () => {
+    setIsCreatingBackup(true);
+    try {
+      // Use our new backup function
+      const filePath = await saveBackupToFile();
+      
+      // Check if sharing is available
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (isAvailable) {
+        // Share the backup file
+        await Sharing.shareAsync(filePath, {
+          mimeType: 'application/json',
+          dialogTitle: 'Save GSM Opener Backup',
+          UTI: 'public.json' // For iOS
+        });
+        
+        // Log the action
+        if (activeDevice?.id) {
+          await addDeviceLog(activeDevice.id, 'Backup', 'App data backup created and shared as JSON file', true);
+        }
+      } else {
+        // Fallback if file sharing isn't available
+        const backupData = await FileSystem.readAsStringAsync(filePath);
+        const shareResult = await Share.share({
+          message: backupData,
+          title: 'GSM Opener Backup Data'
+        });
+        
+        if (shareResult.action === Share.sharedAction && activeDevice?.id) {
+          await addDeviceLog(activeDevice.id, 'Backup', 'App data backup created and shared as text', true);
+        }
+      }
+      
+      Alert.alert('Success', 'Backup created successfully!');
+    } catch (error) {
+      console.error('Failed to create backup:', error);
+      if (activeDevice?.id) {
+        await addDeviceLog(activeDevice.id, 'Backup', `Error creating backup: ${error.message}`, false);
+      }
+      Alert.alert('Error', 'Failed to create backup: ' + error.message);
+    } finally {
+      setIsCreatingBackup(false);
+    }
+  };
+
+  const pickBackupFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/json',
+        copyToCacheDirectory: true
+      });
+      
+      if (result.canceled) {
+        return;
+      }
+      
+      // On newer expo-document-picker versions
+      const fileUri = result.assets?.[0]?.uri || result.uri;
+      
+      // Now read the file
+      const fileContent = await FileSystem.readAsStringAsync(fileUri);
+      
+      Alert.alert(
+        'Restore Backup',
+        'Do you want to restore data from this backup file? This will overwrite all current app data.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Restore', onPress: () => handleRestoreBackup(fileContent) }
+        ]
+      );
+    } catch (error) {
+      console.error('Error picking file:', error);
+      await addLog('Restore', `Error picking backup file: ${error.message}`, false);
+      Alert.alert('Error', 'Could not read backup file: ' + error.message);
+    }
+  };
+
+  const handleRestoreBackup = async (fileContent: string) => {
+    setIsRestoring(true);
+    try {
+      console.log('Starting backup restore process...');
+      
+      if (!fileContent) {
+        throw new Error('Empty backup file');
+      }
+      
+      try {
+        console.log(`Processing backup with ${fileContent.length} characters`);
+        
+        // Add a debug preview of the content
+        if (fileContent.length > 50) {
+          console.log('Content preview:', fileContent.substring(0, 50) + '...');
+        }
+        
+        // IMPORTANT: Use the file-based restore function, not the DataStore one
+        const success = await restoreBackupFromFile(fileContent);
+        
+        if (success) {
+          console.log('Restore operation successful!');
+          
+          // Force refresh the DataStore
+          await refreshStore();
+          
+          // Force refresh devices
+          await refreshDevices();
+          
+          Alert.alert(
+            'Success',
+            'Your backup has been restored successfully! The app will now restart.',
+            [{
+              text: 'OK',
+              onPress: () => {
+                setTimeout(() => router.replace('/'), 500);
+              }
+            }]
+          );
+        } else {
+          throw new Error('Restore operation failed');
+        }
+      } catch (error) {
+        console.error('Restore failed:', error);
+        Alert.alert('Restore Failed', `Unable to restore your backup: ${error.message}`);
+      }
+    } catch (error) {
+      console.error('Backup process error:', error);
+      Alert.alert('Error', `Failed to process backup file: ${error.message}`);
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
+  // Use dynamic styles based on theme
+  const dynamicStyles = {
+    container: {
+      backgroundColor: themeColors.background,
+    },
+    text: {
+      color: themeColors.text.primary
     }
   };
 
   return (
-    <View style={styles.container}>
-      <Header title="Settings" />
-      <ScrollView style={styles.content}>
-        <View style={styles.card}>
-          { /* Removed unwanted SMS command texts */ }
-        </View>
+    <View style={[styles.container, dynamicStyles.container]}>
+      <StandardHeader title="Settings" />
 
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Device Settings</Text>
-          
-          <Text style={styles.inputLabel}>Connect4v Phone number</Text>
-          <TextInput
-            style={styles.input}
-            value={unitNumber}
-            onChangeText={setUnitNumber}
-            placeholder="Enter GSM relay number"
-            keyboardType="phone-pad"
-          />
-          
-          <Text style={styles.inputLabel}>Current Password</Text>
-          <TextInput
-            style={styles.input}
-            value={password}
-            onChangeText={(text) => {
-              // Only allow 4 digits
-              const filtered = text.replace(/[^0-9]/g, '').slice(0, 4);
-              setPassword(filtered);
-            }}
-            placeholder="4-digit password"
-            keyboardType="number-pad"
-            maxLength={4}
-          />
-        </View>
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+        {/* Device Management Card */}
+        <Card title="Device Management" subtitle="Manage your connected devices">
+          <View style={styles.deviceList}>
+            {devices.length === 0 ? (
+              <View style={styles.emptyDeviceContainer}>
+                <Text style={styles.emptyMessage}>No devices configured</Text>
+                <Text style={styles.emptySubMessage}>Add your first device to get started</Text>
+              </View>
+            ) : (
+              devices.map(device => (
+                <View key={device.id} style={styles.deviceItem}>
+                  <View style={styles.deviceInfo}>
+                    <View style={styles.deviceIcon}>
+                      <Ionicons 
+                        name={device.type === 'Connect4v' ? 'hardware-chip' : 'musical-note'} 
+                        size={20} 
+                        color={themeColors.primary} 
+                      />
+                    </View>
+                    <View style={styles.deviceDetails}>
+                      <Text style={[styles.deviceName, dynamicStyles.text]}>{device.name}</Text>
+                      <Text style={styles.deviceType}>{device.type} • {device.unitNumber}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.deviceControls}>
+                    {device.id === activeDevice?.id ? (
+                      <View style={[styles.activeDeviceBadge, { backgroundColor: `${themeColors.success}15` }]}>
+                        <Ionicons name="checkmark-circle" size={16} color={themeColors.success} />
+                        <Text style={[styles.activeDeviceText, { color: themeColors.success }]}>Active</Text>
+                      </View>
+                    ) : (
+                      <TouchableOpacity 
+                        style={[styles.setActiveButton, { backgroundColor: `${themeColors.primary}15` }]}
+                        onPress={() => handleSetActiveDevice(device.id)}
+                      >
+                        <Text style={[styles.setActiveText, { color: themeColors.primary }]}>Set Active</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity 
+                      style={styles.editButton}
+                      onPress={() => handleEditDevice(device.id)}
+                    >
+                      <Ionicons name="create-outline" size={20} color={themeColors.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={styles.removeButton}
+                      onPress={() => removeDevice(device.id)}
+                    >
+                      <Ionicons name="trash-outline" size={20} color={themeColors.error} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+          <View style={styles.deviceButtonsRow}>
+            <Button 
+              title="Add Device" 
+              icon="add-circle" 
+              onPress={handleAddDevice} 
+              style={[styles.deviceButton, { flex: 1 }]}
+            />
+            {devices.length > 1 && (
+              <Button 
+                title="Manage All" 
+                icon="settings-outline" 
+                onPress={handleManageDevices} 
+                variant="outline"
+                style={[styles.deviceButton, { flex: 1, marginLeft: spacing.sm }]}
+              />
+            )}
+          </View>
+        </Card>
 
-        <TouchableOpacity 
-          style={styles.saveButton}
-          onPress={saveToLocalStorage}
-        >
-          <Text style={styles.saveButtonText}>Save Settings</Text>
-        </TouchableOpacity>
+        {/* App Preferences */}
+        <Card title="App Preferences">
+          <View style={styles.preferenceRow}>
+            <View style={styles.preferenceTextContainer}>
+              <Text style={[styles.preferenceLabel, dynamicStyles.text]}>Enable Notifications</Text>
+              <Text style={[styles.preferenceDescription, { color: themeColors.text.secondary }]}>
+                Receive alerts when gate is opened
+              </Text>
+            </View>
+            <Switch
+              value={notificationsEnabled}
+              onValueChange={saveNotificationSetting}
+              trackColor={{ false: '#E5E7EB', true: themeColors.primary }}
+              thumbColor={Platform.OS === 'ios' ? '#FFFFFF' : isDarkMode ? themeColors.primary : '#F9FAFB'}
+            />
+          </View>
+
+          <View style={styles.preferenceRow}>
+            <View style={styles.preferenceTextContainer}>
+              <Text style={[styles.preferenceLabel, dynamicStyles.text]}>Dark Mode</Text>
+              <Text style={[styles.preferenceDescription, { color: themeColors.text.secondary }]}>
+                Use dark color theme
+              </Text>
+            </View>
+            <Switch
+              value={isDarkMode}
+              onValueChange={setDarkMode}
+              trackColor={{ false: '#E5E7EB', true: themeColors.primary }}
+              thumbColor={Platform.OS === 'ios' ? '#FFFFFF' : isDarkMode ? themeColors.primary : '#F9FAFB'}
+            />
+          </View>
+        </Card>
+
+        {/* Backup & Restore Section */}
+        <Card title="Data Management">
+          <Text style={[styles.backupDescription, { color: themeColors.text.secondary }]}>
+            Create a backup of all app data as a JSON file that you can save and use later to restore your settings if needed.
+          </Text>
+          <View style={styles.buttonContainer}>
+            <Button
+              title="Create Backup File"
+              onPress={() => {
+                Alert.alert(
+                  'Create Backup',
+                  'This will create a JSON backup file with all your app data. Continue?',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Create Backup', onPress: handleCreateBackup }
+                  ]
+                );
+              }}
+              loading={isCreatingBackup}
+              style={styles.actionButton}
+            />
+            
+            <Button
+              title="Restore from JSON File"
+              onPress={pickBackupFile}
+              loading={isRestoring}
+              variant="outline"
+              style={styles.actionButton}
+            />
+          </View>
+        </Card>
       </ScrollView>
     </View>
   );
@@ -101,56 +489,132 @@ export default function SettingsPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'white',
   },
   content: {
-    padding: 16,
-    paddingBottom: 80,
+    flex: 1,
   },
-  card: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
+  contentContainer: {
+    padding: spacing.md,
+    paddingBottom: spacing.xl * 2,
   },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 16,
-  },
-  commandList: {
-    marginBottom: 8,
-  },
-  commandItem: {
-    fontSize: 16,
-    marginBottom: 8,
-  },
-  commandLabel: {
-    fontWeight: '600',
-  },
-  inputLabel: {
-    fontSize: 18,
-    marginBottom: 8,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    marginBottom: 16,
-  },
-  saveButton: {
-    backgroundColor: '#00bfff',
-    borderRadius: 8,
-    padding: 12,
+  preferenceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    paddingVertical: spacing.sm,
   },
-  saveButtonText: {
-    color: 'white',
-    fontSize: 18,
+  preferenceTextContainer: {
+    flex: 1,
+    marginRight: spacing.md,
+  },
+  preferenceLabel: {
+    fontSize: 16,
     fontWeight: '500',
+    marginBottom: 4,
+  },
+  preferenceDescription: {
+    fontSize: 14,
+  },
+  backupDescription: {
+    fontSize: 14,
+    marginBottom: spacing.md,
+  },
+  buttonContainer: {
+    marginTop: spacing.sm,
+  },
+  actionButton: {
+    marginBottom: spacing.sm,
+  },
+  deviceList: {
+    marginBottom: spacing.sm,
+  },
+  deviceItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.1)',
+  },
+  deviceInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  deviceIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  deviceDetails: {
+    flex: 1,
+  },
+  deviceControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  deviceName: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  deviceType: {
+    fontSize: 14,
+    color: 'rgba(0,0,0,0.6)',
+  },
+  activeDeviceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginRight: 8,
+  },
+  activeDeviceText: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginLeft: 4,
+  },
+  setActiveButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginRight: 8,
+  },
+  setActiveText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  editButton: {
+    padding: 6,
+    marginRight: 4,
+  },
+  removeButton: {
+    padding: 8,
+  },
+  emptyDeviceContainer: {
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+  },
+  emptyMessage: {
+    textAlign: 'center',
+    fontSize: 16,
+    color: 'rgba(0,0,0,0.5)',
+    marginBottom: spacing.xs,
+  },
+  emptySubMessage: {
+    textAlign: 'center',
+    fontSize: 14,
+    color: 'rgba(0,0,0,0.4)',
+  },
+  deviceButtonsRow: {
+    flexDirection: 'row',
+    marginTop: spacing.sm,
+  },
+  deviceButton: {
+    minWidth: 120,
   },
 });

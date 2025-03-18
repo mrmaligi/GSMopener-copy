@@ -1,199 +1,258 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView, Linking, Platform } from 'react-native';
-import { useRouter } from 'expo-router';
+import { StyleSheet, View, Text, ScrollView, Alert, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Header from './components/Header';
+import { StandardHeader } from './components/StandardHeader';
+import { Card } from './components/Card';
+import { Button } from './components/Button';
+import { colors, spacing, borderRadius } from './styles/theme';
+import { useDevices } from './contexts/DeviceContext';
+import { useDataStore } from './contexts/DataStoreContext';
+import { useAuthorizedUsers } from './hooks/useAuthorizedUsers';
+import { DeviceData } from '../types/devices';
+import { mapIoniconName } from './utils/iconMapping';
+import { openSMSApp } from '../utils/smsUtils';
 
 export default function AuthorizedUsersPage() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const { activeDevice } = useDevices();
+  const [device, setDevice] = useState<DeviceData | null>(null);
+  const [deviceId, setDeviceId] = useState<string | undefined>(undefined);
+  const [password, setPassword] = useState('');
   const [unitNumber, setUnitNumber] = useState('');
-  const [password, setPassword] = useState('1234');
-  const [authorizedUsers, setAuthorizedUsers] = useState([
-    { serial: '001', phone: '', startTime: '', endTime: '' },
-    { serial: '002', phone: '', startTime: '', endTime: '' },
-    { serial: '003', phone: '', startTime: '', endTime: '' },
-    { serial: '004', phone: '', startTime: '', endTime: '' },
-    { serial: '005', phone: '', startTime: '', endTime: '' },
-  ]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
+  const { users, loadUsers } = useAuthorizedUsers(deviceId);
+  const { 
+    getDeviceById, 
+    deauthorizeUserForDevice, 
+    deleteUser,
+    addDeviceLog,
+    logSMSOperation
+  } = useDataStore();
+
+  // Load data based on deviceId from params or active device
   useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
-    try {
-      const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
-      const savedPassword = await AsyncStorage.getItem('password');
-      const savedAuthorizedUsers = await AsyncStorage.getItem('authorizedUsers');
-
-      if (savedUnitNumber) setUnitNumber(savedUnitNumber);
-      if (savedPassword) setPassword(savedPassword);
-      if (savedAuthorizedUsers) setAuthorizedUsers(JSON.parse(savedAuthorizedUsers));
-    } catch (error) {
-      console.error('Error loading data:', error);
-    }
-  };
-
-  const saveToLocalStorage = async () => {
-    try {
-      await AsyncStorage.setItem('authorizedUsers', JSON.stringify(authorizedUsers));
-      alert('User settings saved successfully!');
-    } catch (error) {
-      console.error('Error saving data:', error);
-      alert('Failed to save user settings');
-    }
-  };
-
-  // SMS Commands
-  const sendSMS = (command) => {
-    const smsUrl = Platform.select({
-      ios: `sms:${unitNumber}`, // Removed prefilled body on iOS
-      android: `sms:${unitNumber}?body=${encodeURIComponent(command)}`,
-      default: `sms:${unitNumber}?body=${encodeURIComponent(command)}`,
-    });
+    let currentDeviceId: string | undefined = undefined;
     
-    Linking.canOpenURL(smsUrl)
-      .then(supported => {
-        if (!supported) {
-          alert('SMS is not available on this device');
-          return;
-        }
-        return Linking.openURL(smsUrl);
-      })
-      .catch(err => console.error('An error occurred', err));
+    if (params.deviceId) {
+      currentDeviceId = String(params.deviceId);
+      loadDeviceById(currentDeviceId);
+    } else if (activeDevice) {
+      currentDeviceId = activeDevice.id;
+      setDevice(activeDevice);
+      setUnitNumber(activeDevice.unitNumber);
+      setPassword(activeDevice.password);
+    }
+    
+    setDeviceId(currentDeviceId);
+  }, [params.deviceId, activeDevice]);
+
+  const loadDeviceById = async (deviceId: string) => {
+    try {
+      const foundDevice = getDeviceById(deviceId);
+      
+      if (foundDevice) {
+        setDevice(foundDevice);
+        setUnitNumber(foundDevice.unitNumber);
+        setPassword(foundDevice.password);
+      }
+    } catch (error) {
+      console.error('Failed to load device:', error);
+    }
   };
 
-  // Manage Authorized Users
-  const addAuthorizedUser = (index) => {
-    const user = authorizedUsers[index];
-    if (!user.phone) {
-      alert('Please enter a phone number');
-      return;
+  // Load users when deviceId changes
+  useEffect(() => {
+    if (deviceId) {
+      setIsLoading(true);
+      loadUsers().finally(() => setIsLoading(false));
     }
+  }, [deviceId]);
 
-    let command = `${password}A${user.serial}#${user.phone}#`;
-
-    // Add time restrictions if provided
-    if (user.startTime && user.endTime) {
-      command += `${user.startTime}#${user.endTime}#`;
+  // After any user operation that changes the user list, make sure to refresh the parent component
+  const deleteUserById = async (userId: string) => {
+    if (!deviceId) return;
+    
+    try {
+      setIsDeleting(true);
+      
+      // Find user to get serial number before deleting
+      const user = users.find(u => u.id === userId);
+      if (!user) return;
+      
+      // Confirm deletion
+      Alert.alert(
+        "Delete User",
+        `Are you sure you want to delete ${user.name || 'this user'}?\n\nThis will remove the user from the device. Phone: ${user.phoneNumber}`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { 
+            text: "Delete", 
+            style: "destructive",
+            onPress: async () => {
+              try {
+                // Format: pwdAserial## (e.g., 1234A002##)
+                const command = `${password}A${user.serialNumber}##`;
+                console.log(`Delete user command: ${command}`);
+                
+                // Open SMS app with pre-filled delete command
+                const smsResult = await openSMSApp(unitNumber, command);
+                
+                if (smsResult) {
+                  console.log('SMS app opened successfully for deleting user');
+                  
+                  // Remove user from device's authorized list
+                  await deauthorizeUserForDevice(deviceId, userId);
+                  
+                  // Delete user from DataStore if not used by other devices
+                  await deleteUser(userId);
+                  
+                  // Refresh the list
+                  const updatedUsers = await loadUsers();
+                  
+                  // Log the action
+                  await addDeviceLog(deviceId, 'User Management', `Deleted user: ${user.name}`, true);
+                  
+                  Alert.alert('Success', 'User deleted successfully');
+                }
+              } catch (error) {
+                console.error('Failed to delete user:', error);
+                Alert.alert('Error', 'Failed to delete user');
+              } finally {
+                setIsDeleting(false);
+              }
+            } 
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Failed to prepare user deletion:', error);
+      Alert.alert('Error', 'Failed to prepare user deletion');
+      setIsDeleting(false);
     }
-
-    sendSMS(command);
   };
 
-  const deleteAuthorizedUser = (index) => {
-    const user = authorizedUsers[index];
-    sendSMS(`${password}A${user.serial}##`);
+  const sendSMS = async (command: string) => {
+    if (!unitNumber) {
+      Alert.alert('Error', 'Device phone number not available');
+      return false;
+    }
 
-    // Clear the user data in state
-    const newUsers = [...authorizedUsers];
-    newUsers[index] = { ...newUsers[index], phone: '', startTime: '', endTime: '' };
-    setAuthorizedUsers(newUsers);
+    try {
+      // Open SMS app with pre-filled command
+      await openSMSApp(unitNumber, command);
+      
+      // Use the enhanced logSMSOperation function for consistent logging
+      if (deviceId) {
+        await logSMSOperation(deviceId, command);
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Failed to send SMS:', error);
+      Alert.alert('Error', 'Failed to send command');
+      return false;
+    }
+  };
+
+  const addNewUser = () => {
+    router.back(); // Go back to step3 which has the add user form
   };
 
   return (
     <View style={styles.container}>
-      <Header title="Authorized Users" showBack backTo="/step3" />
-      <ScrollView style={styles.content}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Manage Authorized Users</Text>
-          <Text style={styles.subtitle}>Add or remove users who can call the device to control the relay.</Text>
-          <Text style={styles.subtitle}>Serial numbers range from 001 to 200.</Text>
-        </View>
-
-        {authorizedUsers.map((user, index) => (
-          <View key={index} style={styles.userCard}>
-            <Text style={styles.userTitle}>User {parseInt(user.serial)}</Text>
-            
-            <Text style={styles.inputLabel}>Serial Number</Text>
-            <TextInput
-              style={styles.input}
-              value={user.serial}
-              onChangeText={(text) => {
-                const newUsers = [...authorizedUsers];
-                newUsers[index].serial = text.padStart(3, '0');
-                setAuthorizedUsers(newUsers);
-              }}
-              keyboardType="number-pad"
-              maxLength={3}
-            />
-            
-            <Text style={styles.inputLabel}>Phone Number</Text>
-            <TextInput
-              style={styles.input}
-              value={user.phone}
-              onChangeText={(text) => {
-                const newUsers = [...authorizedUsers];
-                newUsers[index].phone = text;
-                setAuthorizedUsers(newUsers);
-              }}
-              keyboardType="phone-pad"
-            />
-            
-            <View style={styles.timeInputRow}>
-              <View style={styles.timeInputContainer}>
-                <Text style={styles.inputLabel}>Start Time (Optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={user.startTime}
-                  onChangeText={(text) => {
-                    const newUsers = [...authorizedUsers];
-                    newUsers[index].startTime = text;
-                    setAuthorizedUsers(newUsers);
-                  }}
-                  placeholder="YYMMDDHHMM"
-                  keyboardType="number-pad"
-                />
-              </View>
-              
-              <View style={styles.timeInputContainer}>
-                <Text style={styles.inputLabel}>End Time (Optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={user.endTime}
-                  onChangeText={(text) => {
-                    const newUsers = [...authorizedUsers];
-                    newUsers[index].endTime = text;
-                    setAuthorizedUsers(newUsers);
-                  }}
-                  placeholder="YYMMDDHHMM"
-                  keyboardType="number-pad"
-                />
-              </View>
-            </View>
-            
-            <View style={styles.buttonRow}>
-              <TouchableOpacity 
-                style={styles.addButton}
-                onPress={() => addAuthorizedUser(index)}
-              >
-                <Text style={styles.buttonText}>Add User</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.deleteButton}
-                onPress={() => deleteAuthorizedUser(index)}
-              >
-                <Text style={styles.buttonText}>Delete User</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <Text style={styles.commandPreview}>
-              Add: {password}A{user.serial}#{user.phone || "xxxxxxxxxx"}#
-              {user.startTime ? `${user.startTime}#${user.endTime}#` : ""}
-            </Text>
-            <Text style={styles.commandPreview}>
-              Delete: {password}A{user.serial}##
-            </Text>
+      <StandardHeader 
+        title="Authorized Users" 
+        showBack 
+        rightAction={{
+          icon: "add-circle-outline",
+          onPress: addNewUser
+        }}
+      />
+      
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+        {device && (
+          <View style={styles.deviceInfoContainer}>
+            <Ionicons name="hardware-chip" size={20} color={colors.primary} />
+            <Text style={styles.deviceName}>{device.name}</Text>
           </View>
-        ))}
-
-        <TouchableOpacity 
-          style={styles.saveButton}
-          onPress={saveToLocalStorage}
-        >
-          <Text style={styles.saveButtonText}>Save User Settings</Text>
-        </TouchableOpacity>
+        )}
+        
+        {isLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={styles.loadingText}>Loading users...</Text>
+          </View>
+        ) : users.length === 0 ? (
+          <Card title="No Authorized Users">
+            <Text style={styles.emptyText}>
+              No authorized users have been added yet. Add your first user to allow them to control this device.
+            </Text>
+            <Button 
+              title="Add First User" 
+              onPress={addNewUser}
+              icon={<Ionicons name="person-add-outline" size={20} color="white" />}
+              style={styles.addButton}
+              fullWidth
+            />
+          </Card>
+        ) : (
+          <>
+            <Text style={styles.sectionTitle}>
+              {users.length} Authorized {users.length === 1 ? 'User' : 'Users'}
+            </Text>
+            
+            {users.map((user, index) => (
+              <Card key={`user_${user.id || index}`} style={styles.userCard}>
+                <View style={styles.userHeader}>
+                  <Text style={styles.userName}>{user.name || 'Unnamed User'}</Text>
+                  <View style={styles.userSerialContainer}>
+                    <Text style={styles.userSerial}>#{user.serialNumber}</Text>
+                  </View>
+                </View>
+                
+                <View style={styles.userDetails}>
+                  <View style={styles.userDetailRow}>
+                    <Ionicons name="call-outline" size={18} color={colors.text.secondary} style={styles.userDetailIcon} />
+                    <Text style={styles.userDetailText}>{user.phoneNumber}</Text>
+                  </View>
+                  
+                  {user.startTime && user.endTime && (
+                    <View style={styles.userDetailRow}>
+                      <Ionicons name="time-outline" size={18} color={colors.text.secondary} style={styles.userDetailIcon} />
+                      <Text style={styles.userDetailText}>
+                        Access period: {user.startTime} to {user.endTime}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                
+                <View style={styles.userActionContainer}>
+                  <TouchableOpacity 
+                    style={styles.userDeleteButton}
+                    onPress={() => deleteUserById(user.id)}
+                    disabled={isDeleting}
+                  >
+                    <Ionicons name="trash-outline" size={20} color={colors.error} />
+                    <Text style={styles.userDeleteText}>Delete</Text>
+                  </TouchableOpacity>
+                </View>
+              </Card>
+            ))}
+            
+            <Button 
+              title="Add Another User" 
+              onPress={addNewUser}
+              icon={<Ionicons name="person-add-outline" size={20} color="white" />}
+              style={styles.addMoreButton}
+              fullWidth
+            />
+          </>
+        )}
       </ScrollView>
     </View>
   );
@@ -202,97 +261,112 @@ export default function AuthorizedUsersPage() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'white',
+    backgroundColor: colors.background,
   },
   content: {
-    padding: 16,
-    paddingBottom: 80,
+    flex: 1,
   },
-  header: {
-    marginBottom: 24,
+  contentContainer: {
+    padding: spacing.md,
+    paddingBottom: spacing.xxl,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    marginBottom: 8,
+  deviceInfoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: `${colors.primary}10`,
+    padding: spacing.sm,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.md,
   },
-  subtitle: {
-    fontSize: 18,
-    marginBottom: 4,
+  deviceName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: colors.text.primary,
+    marginLeft: spacing.sm,
+  },
+  loadingContainer: {
+    paddingVertical: spacing.xl,
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: spacing.md,
+    color: colors.text.secondary,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: spacing.sm,
+    color: colors.text.secondary,
+  },
+  emptyText: {
+    textAlign: 'center',
+    color: colors.text.secondary,
+    marginVertical: spacing.lg,
+    lineHeight: 22,
   },
   userCard: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
+    marginBottom: spacing.md,
   },
-  userTitle: {
-    fontSize: 20,
-    color: '#00bfff',
-    marginBottom: 16,
-  },
-  inputLabel: {
-    fontSize: 18,
-    marginBottom: 8,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    marginBottom: 16,
-  },
-  timeInputRow: {
+  userHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-  },
-  timeInputContainer: {
-    width: '48%',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8,
-    marginBottom: 16,
-  },
-  addButton: {
-    backgroundColor: '#00bfff',
-    borderRadius: 8,
-    padding: 12,
-    flex: 1,
-    marginRight: 8,
     alignItems: 'center',
+    marginBottom: spacing.sm,
   },
-  deleteButton: {
-    backgroundColor: '#ff4500',
-    borderRadius: 8,
-    padding: 12,
-    flex: 1,
-    marginLeft: 8,
-    alignItems: 'center',
-  },
-  buttonText: {
-    color: 'white',
+  userName: {
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
+    color: colors.text.primary,
   },
-  commandPreview: {
+  userSerialContainer: {
+    backgroundColor: `${colors.primary}15`,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  userSerial: {
     fontSize: 14,
-    color: '#666',
+    fontWeight: '500',
+    color: colors.primary,
+  },
+  userDetails: {
+    marginBottom: spacing.md,
+  },
+  userDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: 4,
   },
-  saveButton: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 8,
-    padding: 12,
-    alignItems: 'center',
-    marginBottom: 20,
+  userDetailIcon: {
+    marginRight: spacing.sm,
   },
-  saveButtonText: {
-    color: 'white',
-    fontSize: 18,
+  userDetailText: {
+    fontSize: 14,
+    color: colors.text.secondary,
+  },
+  userActionContainer: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.sm,
+  },
+  userDeleteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: spacing.sm,
+  },
+  userDeleteText: {
+    color: colors.error,
+    fontSize: 14,
     fontWeight: '500',
+    marginLeft: 4,
+  },
+  addButton: {
+    marginVertical: spacing.md,
+  },
+  addMoreButton: {
+    marginTop: spacing.md, 
+    marginBottom: spacing.xl,
   },
 });
