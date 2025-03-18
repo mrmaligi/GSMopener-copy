@@ -206,6 +206,22 @@ export default function HomePage() {
   const turnRelayOff = () => sendSMS(`${password}DD`);
   const checkStatus = () => sendSMS(`${password}EE`);
 
+  // Function to handle opening external URLs
+  const openUrl = async (url: string) => {
+    const supported = await Linking.canOpenURL(url);
+    
+    if (supported) {
+      await Linking.openURL(url);
+    } else {
+      Alert.alert('Error', `Cannot open URL: ${url}`);
+    }
+  };
+
+  // Function to open email client
+  const openEmail = () => {
+    openUrl('mailto:support@automotionplus.com.au');
+  };
+
   return (
     <View style={styles.container}>
       <StandardHeader 
@@ -214,7 +230,7 @@ export default function HomePage() {
 
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         {/* Active Device Card */}
-        <Card title="Control Panel" elevated>
+        <Card title={activeDevice ? activeDevice.type : "Device Control"} elevated>
           {activeDevice ? (
             <>
               <Text style={styles.deviceName}>
@@ -322,20 +338,31 @@ export default function HomePage() {
         )}
         
         {activeDevice && (
-          <Card title="Setup & Configuration">
-            <TouchableOpacity 
-              style={styles.setupButton}
-              onPress={() => router.push('/(tabs)/setup')}
-            >
-              <Ionicons name="settings-outline" size={24} color={colors.primary} />
-              <View style={styles.setupTextContainer}>
-                <Text style={styles.setupTitle}>Device Configuration</Text>
-                <Text style={styles.setupDescription}>
-                  Manage users, change password and device settings
-                </Text>
+          <Card title="Help & Support">
+            <View style={styles.supportSection}>
+              <View style={styles.supportItem}>
+                <Ionicons name="mail-outline" size={24} color={colors.primary} style={styles.supportIcon} />
+                <TouchableOpacity onPress={openEmail}>
+                  <Text style={styles.supportLink}>support@automotionplus.com.au</Text>
+                </TouchableOpacity>
               </View>
-              <Ionicons name="chevron-forward" size={18} color={colors.text.secondary} />
-            </TouchableOpacity>
+              
+              <Text style={styles.manualTitle}>Installation Manuals:</Text>
+              
+              <View style={styles.supportItem}>
+                <Ionicons name="document-text-outline" size={24} color={colors.primary} style={styles.supportIcon} />
+                <TouchableOpacity onPress={() => openUrl('https://www.automotionplus.com.au/Installation-Manuals/09-%20GSM%20&%20WiFi%20Control%20Systems/01%20-%20GSM%20Audio%20Intercom/APC%20Connect4V%20User%20Manual%20v03.pdf')}>
+                  <Text style={styles.supportLink}>Connect4v Manual</Text>
+                </TouchableOpacity>
+              </View>
+              
+              <View style={styles.supportItem}>
+                <Ionicons name="document-text-outline" size={24} color={colors.primary} style={styles.supportIcon} />
+                <TouchableOpacity onPress={() => openUrl('https://www.automotionplus.com.au/Installation-Manuals/09-%20GSM%20&%20WiFi%20Control%20Systems/01%20-%20GSM%20Audio%20Intercom/PHONIC4-User-Manuel-v05.01.pdf')}>
+                  <Text style={styles.supportLink}>Phonic4v Manual</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           </Card>
         )}
       </ScrollView>
@@ -482,5 +509,27 @@ const styles = StyleSheet.create({
   deviceAction: {
     padding: 4,
     marginHorizontal: 2,
+  },
+  supportSection: {
+    paddingVertical: spacing.sm,
+  },
+  supportItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  supportIcon: {
+    marginRight: spacing.md,
+  },
+  supportLink: {
+    fontSize: 16,
+    color: colors.primary,
+    textDecorationLine: 'underline',
+  },
+  manualTitle: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: colors.text.primary,
+    marginBottom: spacing.sm,
   },
 });

@@ -12,6 +12,7 @@ import { useDataStore } from './contexts/DataStoreContext';
 import { useAuthorizedUsers } from './hooks/useAuthorizedUsers';
 import { DeviceData } from '../types/devices';
 import { mapIoniconName } from './utils/iconMapping';
+import { openSMSApp } from '../utils/smsUtils';
 
 export default function AuthorizedUsersPage() {
   const router = useRouter();
@@ -94,23 +95,30 @@ export default function AuthorizedUsersPage() {
             style: "destructive",
             onPress: async () => {
               try {
-                // Send command to delete user from device
+                // Format: pwdAserial## (e.g., 1234A002##)
                 const command = `${password}A${user.serialNumber}##`;
-                await sendSMS(command);
+                console.log(`Delete user command: ${command}`);
                 
-                // Remove user from device's authorized list
-                await deauthorizeUserForDevice(deviceId, userId);
+                // Open SMS app with pre-filled delete command
+                const smsResult = await openSMSApp(unitNumber, command);
                 
-                // Delete user from DataStore if not used by other devices
-                await deleteUser(userId);
-                
-                // Refresh the list
-                const updatedUsers = await loadUsers();
-                
-                // Log the action
-                await addDeviceLog(deviceId, 'User Management', `Deleted user: ${user.name}`, true);
-                
-                Alert.alert('Success', 'User deleted successfully');
+                if (smsResult) {
+                  console.log('SMS app opened successfully for deleting user');
+                  
+                  // Remove user from device's authorized list
+                  await deauthorizeUserForDevice(deviceId, userId);
+                  
+                  // Delete user from DataStore if not used by other devices
+                  await deleteUser(userId);
+                  
+                  // Refresh the list
+                  const updatedUsers = await loadUsers();
+                  
+                  // Log the action
+                  await addDeviceLog(deviceId, 'User Management', `Deleted user: ${user.name}`, true);
+                  
+                  Alert.alert('Success', 'User deleted successfully');
+                }
               } catch (error) {
                 console.error('Failed to delete user:', error);
                 Alert.alert('Error', 'Failed to delete user');
@@ -131,10 +139,13 @@ export default function AuthorizedUsersPage() {
   const sendSMS = async (command: string) => {
     if (!unitNumber) {
       Alert.alert('Error', 'Device phone number not available');
-      return;
+      return false;
     }
 
     try {
+      // Open SMS app with pre-filled command
+      await openSMSApp(unitNumber, command);
+      
       // Use the enhanced logSMSOperation function for consistent logging
       if (deviceId) {
         await logSMSOperation(deviceId, command);

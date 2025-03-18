@@ -6,6 +6,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { shadows } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { mapIoniconName } from '../utils/iconMapping';
+import { useFonts } from 'expo-font';
+import { Logo } from './Logo';
 
 interface StandardHeaderProps {
   showBack?: boolean;
@@ -27,6 +29,11 @@ export const StandardHeader: React.FC<StandardHeaderProps> = ({
 }) => {
   const router = useRouter();
   const { isDarkMode, colors } = useTheme();
+  
+  // Load the Neuropolitical font - updated path to correct assets/fonts location
+  const [fontsLoaded] = useFonts({
+    'NeuropoliticalRG': require('../../assets/fonts/neuropolitical rg.ttf'),
+  });
   
   const handleBack = () => {
     if (onBackPress) {
@@ -58,14 +65,12 @@ export const StandardHeader: React.FC<StandardHeaderProps> = ({
           >
             <Ionicons 
               name={mapIoniconName("arrow-back")} 
-              size={24} 
+              size={28} // Increased icon size
               color={colors.text.primary} 
             />
           </TouchableOpacity>
         ) : (
-          <Text style={[styles.title, { color: colors.text.primary }]}>
-            ((APC))®
-          </Text>
+          <Logo size="medium" />
         )}
 
         <View style={styles.headerMiddle}>
@@ -74,18 +79,16 @@ export const StandardHeader: React.FC<StandardHeaderProps> = ({
               {title}
             </Text>
           ) : showBack && (
-            <Text style={[styles.title, { color: colors.text.primary }]}>
-              ((APC))®
-            </Text>
+            <Logo size="medium" />
           )}
         </View>
 
         <View style={styles.rightSection}>
           {rightAction && (
-            <TouchableOpacity onPress={rightAction.onPress}>
+            <TouchableOpacity onPress={rightAction.onPress} style={styles.rightButton}>
               <Ionicons
                 name={mapIoniconName(rightAction.icon)}
-                size={24}
+                size={28} // Increased icon size
                 color={colors.primary}
               />
             </TouchableOpacity>
@@ -101,9 +104,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: Platform.OS === 'ios' ? 50 : 40,
-    paddingBottom: 12,
-    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 60 : 50, // Increased top padding
+    paddingBottom: 18, // Increased bottom padding
+    paddingHorizontal: 20, // Increased horizontal padding
     borderBottomWidth: 1,
     ...shadows.sm,
   },
@@ -112,16 +115,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   backButton: {
-    padding: 8,
-    marginRight: 8,
+    padding: 10, // Increased padding
+    marginRight: 10, // Increased margin
   },
   rightSection: {
-    width: 40,
+    width: 48, // Increased width
     alignItems: 'flex-end',
   },
+  rightButton: {
+    padding: 10, // Added padding to the right button
+  },
   title: {
-    fontSize: 22,
+    fontSize: 26, // Increased font size
     fontWeight: '600',
+    marginVertical: 5, // Added vertical margin
+  },
+  apcTitle: {
+    fontFamily: 'NeuropoliticalRG',
   },
 });
 

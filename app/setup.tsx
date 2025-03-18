@@ -12,6 +12,7 @@ import { StandardHeader } from './components/StandardHeader';
 import { DeviceData } from '../types/devices';
 import { getDevices, updateDevice } from '../utils/deviceStorage';
 import { useDevices } from './contexts/DeviceContext';
+import { openSMSApp } from '../utils/smsUtils'; // Add this import
 
 export default function SetupPage() {
   const router = useRouter();
@@ -112,27 +113,13 @@ export default function SetupPage() {
     setIsLoading(true);
 
     try {
-      const formattedUnitNumber = Platform.OS === 'ios' ? unitNumber.replace('+', '') : unitNumber;
-
-      const smsUrl = Platform.select({
-        ios: `sms:${formattedUnitNumber}&body=${encodeURIComponent(command)}`,
-        android: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
-        default: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
-      });
-
-      const supported = await Linking.canOpenURL(smsUrl);
+      // Use the improved SMS utility
+      const result = await openSMSApp(unitNumber, command);
       
-      if (!supported) {
-        Alert.alert(
-          'Error',
-          'SMS is not available on this device. Please ensure an SMS app is installed.',
-          [{ text: 'OK' }]
-        );
-        await addLog('Initial Setup', 'Failed: SMS not available on device', false);
-        return;
+      if (!result) {
+        // Fall back to old method if needed
+        throw new Error('Failed to open SMS app');
       }
-
-      await Linking.openURL(smsUrl);
       
       // Log with specific action details based on command
       if (command.includes('TEL')) {
@@ -179,20 +166,24 @@ export default function SetupPage() {
     let formattedAdminNumber = adminNumber.replace(/\D/g, '');
     
     // Make sure the number has the correct format with "00" prefix before country code
-    if (formattedAdminNumber.startsWith('0')) {
-      formattedAdminNumber = formattedAdminNumber.substring(1); // Remove leading 0 if exists
-    }
-    
-    // Add "00" prefix if it's not already there
-    if (!formattedAdminNumber.startsWith('00')) {
+    if (formattedAdminNumber.startsWith('0') && !formattedAdminNumber.startsWith('00')) {
+      formattedAdminNumber = '00' + formattedAdminNumber.substring(1); // Replace single 0 with 00
+    } else if (!formattedAdminNumber.startsWith('00')) {
       formattedAdminNumber = '00' + formattedAdminNumber;
     }
     
-    // Send the TEL command to register admin
-    sendSMS(`${password}TEL${formattedAdminNumber}#`);
+    // Format: PwdTEL00614xxxxxxxx#
+    const command = `${password}TEL${formattedAdminNumber}#`;
+    console.log(`Admin registration command: ${command}`);
     
-    // Save settings locally
-    saveToLocalStorage();
+    // Open SMS app with pre-filled command
+    openSMSApp(unitNumber, command)
+      .then(success => {
+        if (success) {
+          // Save settings locally after successful SMS opening
+          saveToLocalStorage();
+        }
+      });
   };
 
   const testConnection = () => {
@@ -201,7 +192,12 @@ export default function SetupPage() {
       return;
     }
     
-    sendSMS(`${password}EE`);
+    // Status check command
+    const command = `${password}EE`;
+    console.log(`Status check command: ${command}`);
+    
+    // Open SMS app with pre-filled command
+    openSMSApp(unitNumber, command);
   };
 
   return (

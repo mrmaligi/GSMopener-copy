@@ -8,6 +8,7 @@ import { Card } from '../components/Card';
 import { colors, spacing, borderRadius } from '../styles/theme';
 import { useDevices } from '../contexts/DeviceContext';
 
+// Define proper type for setup steps
 type SetupStep = {
   id: string;
   title: string;
@@ -51,7 +52,7 @@ export default function SetupPage() {
       route: '/step4',
     },
   ];
-
+  
   // Load completed steps on mount or when active device changes
   useEffect(() => {
     loadData();
@@ -59,16 +60,31 @@ export default function SetupPage() {
 
   const loadData = async () => {
     try {
+      // Try to load completed steps from the active device if available
+      if (activeDevice && activeDevice.completedSteps) {
+        setCompletedSteps(activeDevice.completedSteps);
+        return;
+      }
+      
+      // Fall back to legacy storage
       const savedCompletedSteps = await AsyncStorage.getItem('completedSteps');
-      if (savedCompletedSteps) setCompletedSteps(JSON.parse(savedCompletedSteps));
+      if (savedCompletedSteps) {
+        setCompletedSteps(JSON.parse(savedCompletedSteps));
+      }
     } catch (error) {
-      console.error('Error loading data:', error);
+      console.error('Error loading setup data:', error);
     }
   };
 
   const navigateToStep = (step: SetupStep) => {
-    const route = step.route + (activeDevice ? `?deviceId=${activeDevice.id}` : '');
-    router.push(route);
+    try {
+      const route = step.route + (activeDevice ? `?deviceId=${activeDevice.id}` : '');
+      router.push(route);
+    } catch (error) {
+      console.error('Navigation error:', error);
+      // Fall back to basic navigation if the route is invalid
+      router.push(step.route);
+    }
   };
 
   return (

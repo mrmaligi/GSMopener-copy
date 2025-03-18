@@ -15,6 +15,7 @@ import { getDevices, updateDevice } from '../utils/deviceStorage';
 import { mapIoniconName } from './utils/iconMapping';
 import { useAuthorizedUsers } from './hooks/useAuthorizedUsers';
 import { useDataStore } from './contexts/DataStoreContext';
+import { openSMSApp } from '../utils/smsUtils';
 
 interface User {
   id: string;
@@ -59,13 +60,26 @@ export default function Step3Page() {
     
     if (params.deviceId) {
       currentDeviceId = String(params.deviceId);
+      console.log("Step3: Loading device by ID:", currentDeviceId);
       loadDeviceById(currentDeviceId);
     } else if (activeDevice) {
       currentDeviceId = activeDevice.id;
       setDevice(activeDevice);
-      setUnitNumber(activeDevice.unitNumber);
-      setPassword(activeDevice.password);
+      
+      console.log("Step3: Using active device:", activeDevice.id);
+      // Check if unit number exists and log it
+      if (activeDevice.unitNumber) {
+        console.log("Step3: Setting unitNumber from active device:", activeDevice.unitNumber);
+        setUnitNumber(activeDevice.unitNumber);
+      } else {
+        console.warn("Step3: Active device is missing phone number!");
+      }
+      
+      if (activeDevice.password) {
+        setPassword(activeDevice.password);
+      }
     } else {
+      console.log("Step3: No device found, loading legacy settings");
       loadLegacySettings();
     }
     
@@ -79,23 +93,47 @@ export default function Step3Page() {
       
       if (foundDevice) {
         setDevice(foundDevice);
-        setUnitNumber(foundDevice.unitNumber);
-        setPassword(foundDevice.password);
+        
+        // Ensure we get and log the unit number
+        if (foundDevice.unitNumber) {
+          console.log("Step3: Setting unitNumber from loadDeviceById:", foundDevice.unitNumber);
+          setUnitNumber(foundDevice.unitNumber);
+        } else {
+          console.warn("Step3: Found device is missing phone number!");
+          // Try to load from legacy storage as a fallback
+          loadLegacySettings();
+        }
+        
+        if (foundDevice.password) {
+          setPassword(foundDevice.password);
+        }
+      } else {
+        console.warn("Step3: Device not found with ID:", deviceId);
+        loadLegacySettings();
       }
     } catch (error) {
-      console.error('Failed to load device:', error);
+      console.error('Step3: Failed to load device:', error);
+      // Try legacy settings as a fallback when error occurs
+      loadLegacySettings();
     }
   };
 
   const loadLegacySettings = async () => {
     try {
+      console.log("Step3: Attempting to load legacy settings");
       const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
       const savedPassword = await AsyncStorage.getItem('password');
 
-      if (savedUnitNumber) setUnitNumber(savedUnitNumber);
+      if (savedUnitNumber) {
+        console.log("Step3: Loaded unitNumber from legacy storage:", savedUnitNumber);
+        setUnitNumber(savedUnitNumber);
+      } else {
+        console.warn("Step3: No unit number found in legacy storage");
+      }
+      
       if (savedPassword) setPassword(savedPassword);
     } catch (error) {
-      console.error('Failed to load settings:', error);
+      console.error('Step3: Failed to load legacy settings:', error);
     }
   };
 
@@ -115,6 +153,11 @@ export default function Step3Page() {
       setUserCount(users.length);
     }
   }, [users]);
+
+  // Add a useEffect to log when unitNumber changes
+  useEffect(() => {
+    console.log("Step3: unitNumber changed to:", unitNumber);
+  }, [unitNumber]);
 
   const sendSMS = async (command: string) => {
     if (!unitNumber) {
@@ -172,24 +215,62 @@ export default function Step3Page() {
   const generateNextSerial = () => {
     if (newUserSerial) return; // Skip if user already entered a serial
     
-    const usedSerials = users
-      .map(user => user.serialNumber ? parseInt(user.serialNumber, 10) : 0)
-      .filter(num => !isNaN(num));
-    
-    let nextSerial = 1;
-    while (usedSerials.includes(nextSerial) && nextSerial <= 200) {
-      nextSerial++;
+    // Safety check for users array
+    if (!users || !Array.isArray(users) || users.length === 0) {
+      setNewUserSerial('001'); // Default to 001 if users array is undefined or empty
+      return;
     }
     
-    if (nextSerial <= 200) {
-      setNewUserSerial(nextSerial.toString().padStart(3, '0'));
+    try {
+      const usedSerials = users
+        .filter(user => user && user.serialNumber) // Add filter for null/undefined users
+        .map(user => user.serialNumber ? parseInt(user.serialNumber, 10) : 0)
+        .filter(num => !isNaN(num));
+      
+      let nextSerial = 1;
+      while (usedSerials.includes(nextSerial) && nextSerial <= 200) {
+        nextSerial++;
+      }
+      
+      if (nextSerial <= 200) {
+        setNewUserSerial(nextSerial.toString().padStart(3, '0'));
+      }
+    } catch (error) {
+      console.error('Error generating next serial:', error);
+      setNewUserSerial('001'); // Fallback on error
     }
   };
 
   const addNewUser = async () => {
-    if (!deviceId) return;
+    // Check for device ID first
+    if (!deviceId) {
+      Alert.alert('Error', 'Device ID is missing. Please go back and try again.');
+      return;
+    }
+    
+    // Check required fields for user
+    if (!newUserPhone || !newUserSerial) {
+      Alert.alert('Error', 'Please enter both phone number and serial position');
+      return;
+    }
+    
+    // Validate unitNumber upfront with clearer message
+    if (!unitNumber) {
+      console.error("Step3: Attempted to add user but unitNumber is missing");
+      Alert.alert(
+        'Phone Number Missing',
+        'Device phone number is missing. Please go back to Step 1 and ensure the device phone number is configured properly.',
+        [
+          { text: 'Go to Step 1', onPress: () => router.push('/step1') },
+          { text: 'Cancel', style: 'cancel' }
+        ]
+      );
+      return;
+    }
     
     try {
+      setIsLoading(true);
+      
       // Create the user in the DataStore
       const newUser = await addUser({
         name: newUserName || 'Unnamed User',
@@ -202,51 +283,59 @@ export default function Step3Page() {
       // Authorize for this device
       await authorizeUserForDevice(deviceId, newUser.id);
       
-      // Refresh the list and update count
-      const updatedUsers = await loadUsers();
-      setUserCount(updatedUsers.length);
-      
-      // Create command based on provided data
-      let command = `${password}A${newUser.serialNumber}#${newUserPhone}#`;
+      // Create SMS command based on provided data
+      let command = `${password}A${newUserSerial}#${newUserPhone}#`;
       
       // Add time restrictions if provided
       if (newUserStartTime && newUserEndTime) {
         command += `${newUserStartTime}#${newUserEndTime}#`;
       }
       
-      // Send command to add user to device
-      sendSMS(command);
+      console.log(`Step3: Add user command: ${command} to phone number: ${unitNumber}`);
       
-      // Log the action
-      await addDeviceLog(deviceId, 'User Management', `Added user: ${newUser.name}`, true);
+      // No need to check unitNumber again since we validated it above
+      const smsResult = await openSMSApp(unitNumber, command);
       
-      // Clear form
-      setNewUserPhone('');
-      setNewUserName('');
-      setNewUserSerial('');
-      setNewUserStartTime('');
-      setNewUserEndTime('');
-      
-      // Update the completedSteps in AsyncStorage
-      try {
-        const savedCompletedSteps = await AsyncStorage.getItem('completedSteps');
-        let completedSteps = savedCompletedSteps ? JSON.parse(savedCompletedSteps) : [];
+      if (smsResult) {
+        console.log('SMS app opened successfully for adding user');
         
-        if (!completedSteps.includes('step3')) {
-          completedSteps.push('step3');
-          await AsyncStorage.setItem('completedSteps', JSON.stringify(completedSteps));
+        // Log the action
+        await addDeviceLog(deviceId, 'User Management', `Added user: ${newUser.name}`, true);
+        
+        // Clear form fields
+        setNewUserPhone('');
+        setNewUserName('');
+        setNewUserSerial('');
+        setNewUserStartTime('');
+        setNewUserEndTime('');
+        
+        // Update completedSteps in AsyncStorage
+        try {
+          const savedCompletedSteps = await AsyncStorage.getItem('completedSteps');
+          let completedSteps = savedCompletedSteps ? JSON.parse(savedCompletedSteps) : [];
+          
+          if (!completedSteps.includes('step3')) {
+            completedSteps.push('step3');
+            await AsyncStorage.setItem('completedSteps', JSON.stringify(completedSteps));
+          }
+        } catch (error) {
+          console.error('Error updating completed steps:', error);
         }
-      } catch (error) {
-        console.error('Error updating completed steps:', error);
+        
+        // Refresh the user list
+        const updatedUsers = await loadUsers();
+        setUserCount(updatedUsers?.length || 0);
+        
+        Alert.alert('Success', 'User added successfully');
+        
+        // Get next serial number for next user
+        generateNextSerial();
       }
-      
-      Alert.alert('Success', 'User added successfully');
-      
-      // Get next serial number for next user
-      generateNextSerial();
     } catch (error) {
-      console.error('Failed to add user:', error);
-      Alert.alert('Error', 'Failed to add user');
+      console.error('Step3: Failed to add user:', error);
+      Alert.alert('Error', `Failed to add user: ${error.message}`);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -431,11 +520,29 @@ export default function Step3Page() {
             </View>
           )}
           
+          {/* Display warning if unitNumber is missing */}
+          {!unitNumber && (
+            <View style={styles.warningContainer}>
+              <Ionicons name={mapIoniconName("warning-outline")} size={24} color={colors.warning} style={styles.infoIcon} />
+              <Text style={styles.warningText}>
+                Device phone number is missing. Please configure it in Step 1 before adding users.
+              </Text>
+              <Button
+                title="Go to Step 1"
+                variant="secondary"
+                onPress={() => router.push('/step1')}
+                style={styles.warningButton}
+                icon={<Ionicons name={mapIoniconName("arrow-back")} size={16} color={colors.primary} />}
+                fullWidth
+              />
+            </View>
+          )}
+          
           <Button
             title="Add User"
             onPress={addNewUser}
             loading={isLoading}
-            disabled={!newUserPhone || !newUserSerial}
+            disabled={!newUserPhone || !newUserSerial || !unitNumber} // Disable button when unitNumber is missing
             icon={<Ionicons name={mapIoniconName("person-add-outline")} size={20} color="white" />}
             style={styles.addButton}
             fullWidth
@@ -624,5 +731,24 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 12,
     fontWeight: '600',
+  },
+  // Add new styles for the warning
+  warningContainer: {
+    backgroundColor: `${colors.warning}15`,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    alignItems: 'center',
+  },
+  warningText: {
+    flex: 1,
+    fontSize: 14,
+    color: colors.text.secondary,
+    lineHeight: 20,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
+  },
+  warningButton: {
+    marginTop: spacing.xs,
   },
 });

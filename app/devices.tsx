@@ -43,7 +43,6 @@ export default function DevicesPage() {
   };
 
   const handleDeleteDevice = (device: DeviceData) => {
-    // Use our DeviceManager utility for consistent handling
     DeviceManager.confirmDeviceDeletion(
       device.id,
       device.name,
@@ -53,7 +52,7 @@ export default function DevicesPage() {
           setIsLoading(true);
           console.log(`Devices: Deleting device ${deviceId}`);
           
-          const success = await deleteDevice(deviceId);
+          const success = await DeviceManager.deleteDevice(deviceId);
           
           if (success) {
             // If successful, add a log entry

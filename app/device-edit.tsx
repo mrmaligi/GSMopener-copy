@@ -3,14 +3,11 @@ import { View, Text, StyleSheet, Alert, ScrollView } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { getDevices, updateDevice } from '../utils/deviceStorage';
-import { addLog } from '../utils/logging';
 import { StandardHeader } from './components/StandardHeader';
 import { Button } from './components/Button';
 import { Card } from './components/Card';
 import { TextInputField } from './components/TextInputField';
 import { colors, spacing, borderRadius } from './styles/theme';
-import { DeviceData } from '../types/devices';
 import { useDevices } from './contexts/DeviceContext';
 import { useDataStore } from './contexts/DataStoreContext';
 import DeviceManager from '../utils/DeviceManager';
@@ -18,36 +15,35 @@ import DeviceManager from '../utils/DeviceManager';
 export default function EditDevicePage() {
   const router = useRouter();
   const { deviceId } = useLocalSearchParams();
-  const [device, setDevice] = useState<DeviceData | null>(null);
+  const [device, setDevice] = useState<any>(null);
   const [deviceName, setDeviceName] = useState('');
   const [unitNumber, setUnitNumber] = useState('');
-  const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const { refreshDevices, devices } = useDevices();
-  const { deleteDevice } = useDataStore();
+  const { refreshDevices } = useDevices();
+  const { getDeviceById, updateDevice, addDeviceLog } = useDataStore();
 
   useEffect(() => {
-    if (deviceId) {
-      loadDevice(String(deviceId));
-    } else {
+    if (!deviceId) {
       Alert.alert('Error', 'No device ID provided');
       router.back();
+      return;
     }
+    
+    loadDevice(String(deviceId));
   }, [deviceId]);
 
   const loadDevice = async (id: string) => {
     setIsLoading(true);
     try {
-      const devices = await getDevices();
-      const foundDevice = devices.find(d => d.id === id);
+      // Use DataStore to get device information
+      const foundDevice = getDeviceById(id);
       
       if (foundDevice) {
         setDevice(foundDevice);
         setDeviceName(foundDevice.name);
         setUnitNumber(foundDevice.unitNumber);
-        setPassword(foundDevice.password);
       } else {
         Alert.alert('Error', 'Device not found');
         router.back();
@@ -71,11 +67,6 @@ export default function EditDevicePage() {
       return false;
     }
     
-    if (!password.trim() || password.length !== 4 || !/^\d+$/.test(password)) {
-      Alert.alert('Error', 'Password must be a 4-digit number');
-      return false;
-    }
-    
     return true;
   };
 
@@ -85,22 +76,20 @@ export default function EditDevicePage() {
     setIsSaving(true);
     
     try {
-      const updatedDevice: DeviceData = {
-        ...device,
+      // Use DataStore to update the device
+      await updateDevice(device.id, {
         name: deviceName,
         unitNumber,
-        password,
-      };
+      });
       
-      await updateDevice(updatedDevice);
-      
-      // Refresh the devices list to reflect the changes
+      // Refresh devices list and add log entry
       await refreshDevices();
-      
-      await addLog(
+      await addDeviceLog(
+        device.id,
         'Device Management', 
         `Updated device: ${deviceName}`, 
-        true
+        true,
+        'settings'
       );
       
       Alert.alert(
@@ -119,12 +108,9 @@ export default function EditDevicePage() {
   const handleDeleteDevice = () => {
     if (!device) return;
     
-    // Check if this is the only device
-    const isOnlyDevice = devices.length <= 1;
-    
     Alert.alert(
       'Delete Device',
-      `Are you sure you want to delete "${device.name}"?${isOnlyDevice ? ' This is your only device.' : ''}`,
+      `Are you sure you want to delete "${device.name}"?`,
       [
         { text: 'Cancel', style: 'cancel' },
         { 
@@ -133,13 +119,14 @@ export default function EditDevicePage() {
           onPress: async () => {
             setIsDeleting(true);
             try {
-              const success = await deleteDevice(device.id);
+              const success = await DeviceManager.deleteDevice(device.id);
+              
               if (success) {
                 await refreshDevices();
                 Alert.alert(
                   'Device Deleted',
                   'The device has been deleted successfully',
-                  [{ text: 'OK', onPress: () => router.replace('/(tabs)') }]
+                  [{ text: 'OK', onPress: () => router.replace('/devices') }]
                 );
               } else {
                 throw new Error('Failed to delete device');
@@ -160,7 +147,6 @@ export default function EditDevicePage() {
     return (
       <View style={styles.container}>
         <StandardHeader title="Edit Device" showBack />
-        
         <View style={styles.loadingContainer}>
           <Text>Loading device information...</Text>
         </View>
@@ -192,26 +178,10 @@ export default function EditDevicePage() {
             containerStyle={styles.inputContainer}
           />
           
-          <TextInputField
-            label="Device Password"
-            value={password}
-            onChangeText={(text) => {
-              // Only allow digits and limit to 4 characters
-              const filtered = text.replace(/[^0-9]/g, '').slice(0, 4);
-              setPassword(filtered);
-            }}
-            placeholder="4-digit password"
-            keyboardType="number-pad"
-            containerStyle={styles.inputContainer}
-            maxLength={4}
-            secureTextEntry
-          />
-          
           <View style={styles.infoContainer}>
             <Ionicons name="information-circle-outline" size={20} color={colors.primary} />
             <Text style={styles.infoText}>
-              Changes to the password here only update the local app record. To change the 
-              device's actual password, use the "Change Password" option in the setup menu.
+              To change the device's password, use the "Change Password" option in the setup menu.
             </Text>
           </View>
         </Card>

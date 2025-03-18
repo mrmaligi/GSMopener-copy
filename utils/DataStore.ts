@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DevSettings } from 'react-native';
 
 // Simple UUID generator for React Native environment
 const generateUUID = (): string => {
@@ -234,7 +235,22 @@ class DataStore {
 
   // Delete a device and all associated data
   public async deleteDevice(deviceId: string): Promise<boolean> {
+    // Added validation to prevent undefined deviceId issues
+    if (!deviceId || deviceId === 'undefined' || typeof deviceId !== 'string') {
+      console.error('DataStore: Invalid deviceId for deletion:', deviceId);
+      return false;
+    }
+    
     console.log(`DataStore: Deleting device ${deviceId}`);
+    
+    // Make sure store is initialized
+    if (!this.isInitialized) {
+      try {
+        await this.initialize();
+      } catch (initError) {
+        console.error('DataStore: Failed to initialize during delete:', initError);
+      }
+    }
     
     try {
       const initialLength = this.store.devices.length;
@@ -251,8 +267,8 @@ class DataStore {
       // Remove device
       this.store.devices = this.store.devices.filter(d => d.id !== deviceId);
       
-      // Remove device logs
-      if (this.store.logs[deviceId]) {
+      // Remove device logs - FIX: Verify deviceId before accessing logs
+      if (deviceId && this.store.logs[deviceId]) {
         delete this.store.logs[deviceId];
       }
       
@@ -393,6 +409,12 @@ class DataStore {
     success: boolean = true,
     category: 'relay' | 'settings' | 'user' | 'system' = 'system'
   ): Promise<LogEntry> {
+    // Validate deviceId, also check for empty/whitespace strings
+    if (!deviceId || typeof deviceId !== 'string' || !deviceId.trim()) {
+      console.error('Invalid deviceId for log entry:', deviceId);
+      // Use a fallback deviceId for system logs
+      deviceId = 'system';
+    }
     if (!this.store.logs[deviceId]) {
       this.store.logs[deviceId] = [];
     }
@@ -414,11 +436,19 @@ class DataStore {
 
   // Get logs for a specific device
   public getDeviceLogs(deviceId: string): LogEntry[] {
+    if (!deviceId || typeof deviceId !== 'string' || !deviceId.trim()) {
+      console.error("Invalid deviceId for getting logs:", deviceId);
+      deviceId = 'system';
+    }
     return this.store.logs[deviceId] ? [...this.store.logs[deviceId]] : [];
   }
 
   // Clear logs for a specific device
   public async clearDeviceLogs(deviceId: string): Promise<boolean> {
+    if (!deviceId || typeof deviceId !== 'string' || !deviceId.trim()) {
+      console.error("Invalid deviceId for clearing logs:", deviceId);
+      deviceId = 'system';
+    }
     if (this.store.logs[deviceId]) {
       this.store.logs[deviceId] = [];
       await this.saveStore();
@@ -464,11 +494,27 @@ class DataStore {
       
       this.store = parsedData;
       await this.saveStore();
+      
+      // Force reinitialization to ensure data is fresh
+      await this.forceReinitialization();
+      
+      // Return success
       return true;
     } catch (error) {
       console.error('Failed to restore from backup:', error);
       return false;
     }
+  }
+
+  // Force reinitialization of the store - useful after restore
+  public async forceReinitialization(): Promise<void> {
+    // Reset the initialized flag so initialize() will reload from storage
+    this.isInitialized = false;
+    
+    // Re-initialize with data from storage
+    await this.initialize();
+    
+    console.log('DataStore: Force reinitialization completed');
   }
 }
 

@@ -17,8 +17,10 @@ import { useDevices } from '../contexts/DeviceContext';
 import { mapIoniconName } from '../utils/iconMapping';
 import { useDataStore } from '../contexts/DataStoreContext';
 import { saveBackupToFile, shareBackup, pickAndRestoreBackup, restoreFromBackup as restoreBackupFromFile } from '../../utils/backupRestore';
-// Import device storage constants directly
-import { DEVICES_STORAGE_KEY, ACTIVE_DEVICE_KEY } from '../../utils/deviceStorage';
+// Import device storage functions and constants
+import { DEVICES_STORAGE_KEY, ACTIVE_DEVICE_KEY, getDevices } from '../../utils/deviceStorage';
+// Import DeviceManager
+import DeviceManager from '../../utils/DeviceManager';
 
 // Define a device interface
 interface Device {
@@ -39,7 +41,7 @@ export default function SettingsPage() {
   // Use theme context and devices context
   const { isDarkMode, setDarkMode, colors: themeColors } = useTheme();
   const { devices: deviceList, activeDevice, setActiveDeviceById, refreshDevices } = useDevices();
-  const { createBackup, restoreFromBackup: restoreDataStore, addDeviceLog, deleteDevice, store } = useDataStore();
+  const { createBackup, restoreFromBackup: restoreDataStore, addDeviceLog, deleteDevice, store, refreshStore } = useDataStore();
 
   useEffect(() => {
     loadSettings();
@@ -73,6 +75,7 @@ export default function SettingsPage() {
   };
 
   const handleEditDevice = (deviceId: string) => {
+    // Make sure we're passing deviceId as a parameter, not in the URL query
     router.push({
       pathname: '/device-edit',
       params: { deviceId }
@@ -137,57 +140,57 @@ export default function SettingsPage() {
   const confirmDeleteDevice = async (deviceId: string) => {
     setIsLoading(true);
     try {
-      // Validate deviceId to prevent undefined key issues
-      if (!deviceId) {
+      // Add more validation to prevent undefined key issues
+      if (!deviceId || typeof deviceId !== 'string') {
         console.error('Invalid deviceId: empty or undefined');
         Alert.alert('Error', 'Invalid device ID');
+        setIsLoading(false);
         return;
       }
       
       console.log(`Confirming device deletion for ID: ${deviceId}`);
       
-      // Try AsyncStorage direct deletion first
       try {
-        // Get all devices from AsyncStorage
-        const devicesJson = await AsyncStorage.getItem(DEVICES_STORAGE_KEY);
-        if (devicesJson) {
-          let allDevices = JSON.parse(devicesJson);
+        // Check if DeviceManager is available and is a valid object
+        if (!DeviceManager || typeof DeviceManager.deleteDevice !== 'function') {
+          console.error('DeviceManager is not available or invalid');
           
-          // Remove the target device
-          const filteredDevices = allDevices.filter(d => d.id !== deviceId);
+          // Fallback to direct deletion using DataStore
+          const success = await deleteDevice(deviceId);
           
-          // Save updated device list
-          await AsyncStorage.setItem(DEVICES_STORAGE_KEY, JSON.stringify(filteredDevices));
+          if (success) {
+            // Refresh the devices list
+            await refreshDevices();
+            
+            // Update local devices state
+            const updatedDevices = await getDevices() || [];
+            setDevices(updatedDevices);
+            
+            Alert.alert('Success', 'Device deleted successfully');
+          } else {
+            throw new Error('Failed to delete device');
+          }
+        } else {
+          // Use DeviceManager to handle deletion properly
+          const success = await DeviceManager.deleteDevice(deviceId);
           
-          // Handle active device if needed
-          const activeId = await AsyncStorage.getItem(ACTIVE_DEVICE_KEY);
-          if (activeId === deviceId && filteredDevices.length > 0) {
-            // Set new active device
-            await AsyncStorage.setItem(ACTIVE_DEVICE_KEY, filteredDevices[0].id);
-          } else if (activeId === deviceId) {
-            // Clear active device
-            await AsyncStorage.removeItem(ACTIVE_DEVICE_KEY);
+          if (success) {
+            // Refresh the devices list
+            await refreshDevices();
+            
+            // Update local devices state
+            const updatedDevices = await getDevices() || [];
+            setDevices(updatedDevices);
+            
+            Alert.alert('Success', 'Device deleted successfully');
+          } else {
+            throw new Error('Failed to delete device using DeviceManager');
           }
         }
-      } catch (storageError) {
-        console.error('AsyncStorage deletion error:', storageError);
+      } catch (error) {
+        console.error('Failed to delete device:', error);
+        Alert.alert('Error', 'Failed to delete device: ' + (error?.message || 'Unknown error'));
       }
-      
-      // Also attempt DataStore deletion
-      console.log(`Attempting to delete device: ${deviceId}`);
-      const success = await deleteDevice(deviceId);
-      
-      // Refresh the devices list
-      await refreshDevices();
-      
-      // Update local devices state - avoid potential undefined lists
-      const updatedDevices = await deviceList || [];
-      setDevices(updatedDevices);
-      
-      Alert.alert('Success', 'Device deleted successfully');
-    } catch (error) {
-      console.error('Failed to delete device:', error);
-      Alert.alert('Error', 'Failed to delete device: ' + (error?.message || 'Unknown error'));
     } finally {
       setIsLoading(false);
     }
@@ -293,6 +296,13 @@ export default function SettingsPage() {
         
         if (success) {
           console.log('Restore operation successful!');
+          
+          // Force refresh the DataStore
+          await refreshStore();
+          
+          // Force refresh devices
+          await refreshDevices();
+          
           Alert.alert(
             'Success',
             'Your backup has been restored successfully! The app will now restart.',
@@ -531,9 +541,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
   },
+  deviceIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  deviceDetails: {
+    flex: 1,
+  },
   deviceControls: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  deviceName: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  deviceType: {
+    fontSize: 14,
+    color: 'rgba(0,0,0,0.6)',
   },
   activeDeviceBadge: {
     flexDirection: 'row',
@@ -586,13 +616,5 @@ const styles = StyleSheet.create({
   },
   deviceButton: {
     minWidth: 120,
-  },
-  emptyMessage: {
-    textAlign: 'center',
-    padding: 16,
-    color: 'rgba(0,0,0,0.5)',
-  },
-  addDeviceButton: {
-    marginTop: spacing.sm,
   },
 });

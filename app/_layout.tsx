@@ -8,6 +8,10 @@ import { DeviceProvider } from './contexts/DeviceContext';
 import { DataStoreProvider } from './contexts/DataStoreContext';
 import { debugDataStore } from '../utils/debugTools';
 import { DataStoreSyncMonitor } from './components/DataStoreSyncMonitor';
+import { View, StyleSheet } from 'react-native';
+import { StandardHeader } from './components/StandardHeader';
+import { useTheme } from './contexts/ThemeContext';
+import '../utils/asyncStorageDebug';
 
 declare global {
   interface Window {
@@ -16,6 +20,8 @@ declare global {
 }
 
 export default function RootLayout() {
+  const { colors } = useTheme();
+
   useEffect(() => {
     window.frameworkReady?.();
     
@@ -32,14 +38,35 @@ export default function RootLayout() {
       <ThemeProvider>
         <DataStoreProvider>
           <DeviceProvider>
-            <DataStoreSyncMonitor />
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="+not-found" />
-            </Stack>
-            <StatusBar style="auto" />
+            <View style={[styles.container, { backgroundColor: colors.background }]}>
+              <DataStoreSyncMonitor />
+              <Stack
+                screenOptions={{
+                  // Hide the default header since we're using StandardHeader
+                  headerShown: false,
+                  
+                  // Animation settings
+                  animation: 'slide_from_right',
+                  
+                  // Content style (apply padding to account for header height)
+                  contentStyle: {
+                    backgroundColor: colors.background,
+                  },
+                }}
+              >
+                <Stack.Screen name="+not-found" />
+              </Stack>
+              <StatusBar style="auto" />
+            </View>
           </DeviceProvider>
         </DataStoreProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+});

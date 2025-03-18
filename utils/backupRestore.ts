@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
+import DataStore from './DataStore';
 
 // Keys used in AsyncStorage
 const BACKUP_KEYS = {
@@ -211,7 +212,6 @@ export const restoreFromBackup = async (backupJson: string): Promise<boolean> =>
       }
     }
     
-    // Rest of process remains the same...
     let dataToStore = {};
     
     if (parsedData && parsedData.data && typeof parsedData.data === 'object') {
@@ -227,31 +227,111 @@ export const restoreFromBackup = async (backupJson: string): Promise<boolean> =>
       throw new Error('Unsupported backup format');
     }
     
-    // Clear existing data
+    // Cache existing app_data before clearing if it exists
+    let existingAppData = null;
     try {
-      const keys = await AsyncStorage.getAllKeys();
-      if (keys.length > 0) {
-        await AsyncStorage.multiRemove(keys);
-        console.log(`RESTORE: Cleared ${keys.length} existing keys`);
+      const appDataString = await AsyncStorage.getItem('app_data');
+      if (appDataString) {
+        existingAppData = JSON.parse(appDataString);
+        console.log('RESTORE: Cached existing app_data for potential merge');
+      }
+    } catch (e) {
+      console.warn('RESTORE: Error reading existing app_data:', e);
+    }
+    
+    // Special handling for logs - cache these as they're complex objects that need special care
+    const cachedLogs = {};
+    for (const [key, value] of Object.entries(dataToStore)) {
+      // Look for log keys which typically have "logs" in their name
+      if (key.includes('logs') || key === 'app_data') {
+        try {
+          // If this is the main app_data, extract just the logs part
+          if (key === 'app_data' && value && typeof value === 'object' && value.logs) {
+            cachedLogs['app_logs'] = value.logs;
+            console.log('RESTORE: Found logs in app_data, caching separately');
+          } else {
+            cachedLogs[key] = value;
+          }
+        } catch (e) {
+          console.warn(`RESTORE: Failed to cache logs for key ${key}:`, e);
+        }
+      }
+    }
+    
+    // Handle conflicts - mainly regarding device data
+    // If there's app_data in the backup and existing app_data, special handling needed
+    if (dataToStore['app_data'] && existingAppData) {
+      try {
+        const backupAppData = dataToStore['app_data'];
+        
+        // Check if we should merge device data
+        if (backupAppData.devices && existingAppData.devices) {
+          console.log('RESTORE: Attempting to merge device data');
+          
+          // Keep track of device IDs in existing data
+          const existingDeviceIds = new Set(existingAppData.devices.map(d => d.id));
+          
+          // Merge in devices that don't already exist
+          for (const backupDevice of backupAppData.devices) {
+            if (!existingDeviceIds.has(backupDevice.id)) {
+              console.log(`RESTORE: Adding new device from backup: ${backupDevice.name}`);
+              existingAppData.devices.push(backupDevice);
+            } else {
+              console.log(`RESTORE: Device already exists, skipping: ${backupDevice.name}`);
+            }
+          }
+          
+          // Update the backup data to use our merged device list
+          backupAppData.devices = existingAppData.devices;
+          
+          // Merge logs from existing app_data
+          if (existingAppData.logs) {
+            for (const [deviceId, logEntries] of Object.entries(existingAppData.logs)) {
+              if (!backupAppData.logs[deviceId]) {
+                backupAppData.logs[deviceId] = logEntries;
+                console.log(`RESTORE: Preserved logs for device ${deviceId}`);
+              } else {
+                // Merge log entries by ID to avoid duplicates
+                const existingLogIds = new Set(logEntries.map(entry => entry.id));
+                const newLogs = backupAppData.logs[deviceId].filter(entry => !existingLogIds.has(entry.id));
+                backupAppData.logs[deviceId] = [...newLogs, ...logEntries];
+                console.log(`RESTORE: Merged ${newLogs.length} new logs with ${logEntries.length} existing logs for device ${deviceId}`);
+              }
+            }
+          }
+          
+          // Update the dataToStore with our merged app_data
+          dataToStore['app_data'] = backupAppData;
+        }
+      } catch (mergeError) {
+        console.error('RESTORE: Error merging app_data:', mergeError);
+        // Continue with original data if merge fails
+      }
+    }
+    
+    // Clear existing data (except for the data we want to preserve)
+    try {
+      // Get a list of all keys except those we want to preserve
+      const allKeys = await AsyncStorage.getAllKeys();
+      const keysToRemove = allKeys.filter(key => {
+        // Don't remove app_data if we've merged it
+        if (key === 'app_data' && dataToStore['app_data'] && existingAppData) {
+          return false;
+        }
+        return true;
+      });
+      
+      if (keysToRemove.length > 0) {
+        await AsyncStorage.multiRemove(keysToRemove);
+        console.log(`RESTORE: Cleared ${keysToRemove.length} existing keys`);
       }
     } catch (clearError) {
       console.warn('RESTORE: Error clearing data:', clearError);
     }
     
-    // Import the data
-    const entries = Object.entries(dataToStore);
-    console.log(`RESTORE: Found ${entries.length} items to restore`);
-    
-    if (entries.length === 0) {
-      throw new Error('Backup contains no data to restore');
-    }
-    
-    // Log the keys we're about to restore
-    console.log('RESTORE: Keys to restore:', Object.keys(dataToStore).join(', '));
-    
     // Save each item
     let successCount = 0;
-    for (const [key, value] of entries) {
+    for (const [key, value] of Object.entries(dataToStore)) {
       try {
         if (value === null || value === undefined) continue;
         
@@ -264,11 +344,42 @@ export const restoreFromBackup = async (backupJson: string): Promise<boolean> =>
       }
     }
     
+    // Now restore logs from our cache
+    try {
+      if (Object.keys(cachedLogs).length > 0) {
+        console.log(`RESTORE: Restoring cached logs for ${Object.keys(cachedLogs).length} keys`);
+        
+        // Restore each log collection we cached
+        for (const [logKey, logValue] of Object.entries(cachedLogs)) {
+          console.log(`RESTORE: Restoring logs for ${logKey}`);
+          // Skip if already stored with the main data
+          if (dataToStore[logKey]) continue;
+          
+          const logValueToStore = typeof logValue === 'string' ? logValue : JSON.stringify(logValue);
+          await AsyncStorage.setItem(logKey, logValueToStore);
+          successCount++;
+        }
+      }
+    } catch (logRestoreError) {
+      console.error('RESTORE: Error restoring logs:', logRestoreError);
+    }
+    
     if (successCount === 0) {
       throw new Error('Failed to restore any items');
     }
+
+    // Force DataStore to reinitialize after restore
+    try {
+      // Reset DataStore's initialization state
+      const dataStore = DataStore.getInstance();
+      await dataStore.forceReinitialization();
+      console.log('RESTORE: DataStore reinitialized successfully');
+    } catch (reinitError) {
+      console.error('RESTORE: Error reinitializing DataStore:', reinitError);
+      // Continue anyway, as the main restore succeeded
+    }
     
-    console.log(`RESTORE: Successfully restored ${successCount}/${entries.length} items`);
+    console.log(`RESTORE: Successfully restored ${successCount}/${Object.keys(dataToStore).length} items`);
     return true;
   } catch (error) {
     console.error('RESTORE FAILED:', error);

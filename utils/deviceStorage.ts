@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DeviceData } from '../types/devices';
+import { safeGetItem, safeSetItem, safeRemoveItem } from './storageUtils';
 
 const DEVICES_STORAGE_KEY = 'gsm_devices';
 const ACTIVE_DEVICE_KEY = 'active_device_id';
@@ -15,7 +16,7 @@ const generateUUID = (): string => {
 // Get all stored devices
 export const getDevices = async (): Promise<DeviceData[]> => {
   try {
-    const deviceData = await AsyncStorage.getItem(DEVICES_STORAGE_KEY);
+    const deviceData = await safeGetItem(DEVICES_STORAGE_KEY);
     if (deviceData) {
       return JSON.parse(deviceData);
     }
@@ -38,7 +39,7 @@ export const addDevice = async (device: Omit<DeviceData, 'id'>): Promise<DeviceD
     };
     
     // Add to storage
-    await AsyncStorage.setItem(DEVICES_STORAGE_KEY, JSON.stringify([...devices, newDevice]));
+    await safeSetItem(DEVICES_STORAGE_KEY, JSON.stringify([...devices, newDevice]));
     
     // If this is the first device, set it as active
     if (devices.length === 0) {
@@ -57,7 +58,7 @@ export const updateDevice = async (device: DeviceData): Promise<void> => {
   try {
     const devices = await getDevices();
     const updatedDevices = devices.map(d => d.id === device.id ? device : d);
-    await AsyncStorage.setItem(DEVICES_STORAGE_KEY, JSON.stringify(updatedDevices));
+    await safeSetItem(DEVICES_STORAGE_KEY, JSON.stringify(updatedDevices));
   } catch (error) {
     console.error('Failed to update device:', error);
     throw error;
@@ -67,6 +68,12 @@ export const updateDevice = async (device: DeviceData): Promise<void> => {
 // Delete a device
 export const deleteDevice = async (deviceId: string): Promise<boolean> => {
   try {
+    // Added validation to prevent undefined deviceId issues
+    if (!deviceId || deviceId === 'undefined' || typeof deviceId !== 'string') {
+      console.error('deviceStorage: Invalid deviceId for deletion:', deviceId);
+      return false;
+    }
+
     console.log(`deviceStorage: Deleting device ${deviceId}`);
     
     // Get current devices
@@ -98,7 +105,7 @@ export const deleteDevice = async (deviceId: string): Promise<boolean> => {
     }
     
     // Save updated list
-    await AsyncStorage.setItem(DEVICES_STORAGE_KEY, JSON.stringify(updatedDevices));
+    await safeSetItem(DEVICES_STORAGE_KEY, JSON.stringify(updatedDevices));
     
     // If the deleted device was the active one, update the active device
     const activeId = await getActiveDeviceId();
@@ -111,9 +118,32 @@ export const deleteDevice = async (deviceId: string): Promise<boolean> => {
         console.log(`deviceStorage: New active device: ${updatedDevices[0].id}`);
       } else {
         // Clear active device if no devices remain
-        await AsyncStorage.removeItem(ACTIVE_DEVICE_KEY);
+        await safeRemoveItem(ACTIVE_DEVICE_KEY);
         console.log('deviceStorage: No devices remain, cleared active device');
       }
+    }
+    
+    // Clean up device-specific data
+    try {
+      // Ensure deviceId is still valid before creating keys
+      if (deviceId && typeof deviceId === 'string') {
+        // Remove device-specific keys
+        const deviceKeys = [
+          `authorizedUsers_${deviceId}`,
+          `app_logs_${deviceId}`,
+          `relaySettings_${deviceId}`
+        ];
+        
+        // Validate that all keys are strings
+        const validKeys = deviceKeys.filter(key => typeof key === 'string');
+        
+        if (validKeys.length > 0) {
+          await AsyncStorage.multiRemove(validKeys);
+        }
+      }
+    } catch (cleanupError) {
+      console.warn('deviceStorage: Error cleaning up device-specific keys:', cleanupError);
+      // Continue anyway since the device is already deleted
     }
     
     return true;
@@ -126,7 +156,7 @@ export const deleteDevice = async (deviceId: string): Promise<boolean> => {
 // Get the active device ID
 export const getActiveDeviceId = async (): Promise<string | null> => {
   try {
-    return await AsyncStorage.getItem(ACTIVE_DEVICE_KEY);
+    return await safeGetItem(ACTIVE_DEVICE_KEY);
   } catch (error) {
     console.error('Failed to get active device ID:', error);
     return null;
@@ -136,7 +166,7 @@ export const getActiveDeviceId = async (): Promise<string | null> => {
 // Set the active device
 export const setActiveDevice = async (deviceId: string): Promise<void> => {
   try {
-    await AsyncStorage.setItem(ACTIVE_DEVICE_KEY, deviceId);
+    await safeSetItem(ACTIVE_DEVICE_KEY, deviceId);
   } catch (error) {
     console.error('Failed to set active device:', error);
     throw error;
@@ -196,4 +226,13 @@ export const migrateFromLegacyStorage = async (): Promise<boolean> => {
     console.error('Migration error:', error);
     return false;
   }
+};
+
+export default {
+  getDevices,
+  addDevice,
+  updateDevice,
+  getActiveDeviceId,
+  setActiveDevice,
+  getActiveDevice
 };

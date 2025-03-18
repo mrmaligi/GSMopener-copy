@@ -1,19 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, ScrollView, TouchableOpacity, Platform, Linking, Alert } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, ScrollView, Text, StyleSheet, TouchableOpacity, Alert, Platform, Linking, ActivityIndicator } from 'react-native';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { colors, spacing, borderRadius } from './styles/theme';
 import { StandardHeader } from './components/StandardHeader';
 import { Card } from './components/Card';
-import { Button } from './components/Button';
 import { TextInputField } from './components/TextInputField';
-import { colors, spacing, shadows, borderRadius } from './styles/theme';
-import { addLog } from '../utils/logging';
+import { Button } from './components/Button';
 import { useDevices } from './contexts/DeviceContext';
-import { DeviceData } from '../types/devices';
-import { getDevices, updateDevice } from '../utils/deviceStorage';
-import { mapIoniconName } from './utils/iconMapping';
 import { useDataStore } from './contexts/DataStoreContext';
+import { openSMSApp } from '../utils/smsUtils'; // Fixed import path from 'sms' to 'smsUtils'
+import { DeviceData } from '../types/devices';
+import { getDevices } from '../utils/deviceStorage';
+import { mapIoniconName } from './utils/iconMapping';
+import { PageWithHeader } from './components/PageWithHeader';
 
 export default function Step4Page() {
   const router = useRouter();
@@ -28,60 +29,97 @@ export default function Step4Page() {
     latchTime: '000',      // Relay latch time in seconds (000-999)
   });
   const [isLoading, setIsLoading] = useState(false);
-  // Fix missing imports by adding logSMSOperation
-  const { addDeviceLog, logSMSOperation } = useDataStore();
+  const [isDataLoading, setIsDataLoading] = useState(true);
+  const { addDeviceLog, logSMSOperation, getDeviceById, updateDevice } = useDataStore();
 
   // Load appropriate device data
-  useEffect(() => {
-    if (params.deviceId) {
-      // Load specific device if ID provided
-      const id = String(params.deviceId);
-      setDeviceId(id);
-      loadDeviceById(id);
-    } else if (activeDevice) {
-      // Otherwise use active device
-      setDeviceId(activeDevice.id);
-      setDevice(activeDevice);
-      setUnitNumber(activeDevice.unitNumber);
-      setPassword(activeDevice.password);
-      if (activeDevice.relaySettings) {
-        setRelaySettings(activeDevice.relaySettings);
-      }
-    } else {
-      // Fall back to legacy storage
-      loadLegacyData();
-    }
-  }, [params.deviceId, activeDevice]);
-
-  const loadDeviceById = async (deviceId: string) => {
+  const loadData = useCallback(async () => {
+    console.log("Step4: Starting to load data");
+    setIsDataLoading(true);
+    
     try {
-      const devices = await getDevices();
-      const foundDevice = devices.find(d => d.id === deviceId);
-      
-      if (foundDevice) {
-        setDevice(foundDevice);
-        setUnitNumber(foundDevice.unitNumber);
-        setPassword(foundDevice.password);
-        if (foundDevice.relaySettings) {
-          setRelaySettings(foundDevice.relaySettings);
+      if (params.deviceId) {
+        // Load specific device if ID provided
+        const id = String(params.deviceId);
+        setDeviceId(id);
+        console.log("Step4: Loading device by ID:", id);
+        
+        // Use DataStore to get device info directly
+        const foundDevice = getDeviceById(id);
+        
+        if (foundDevice) {
+          console.log("Step4: Found device:", foundDevice.name);
+          setDevice(foundDevice);
+          
+          if (foundDevice.unitNumber) {
+            console.log("Step4: Setting unitNumber from loadDeviceById:", foundDevice.unitNumber);
+            setUnitNumber(foundDevice.unitNumber);
+          } else {
+            console.warn("Step4: Found device missing phone number, trying legacy data");
+            await loadLegacyData();
+          }
+          
+          setPassword(foundDevice.password || '1234');
+          if (foundDevice.relaySettings) {
+            setRelaySettings(foundDevice.relaySettings);
+          }
+        } else {
+          console.warn("Step4: Device not found with ID:", id);
+          await loadLegacyData();
         }
+      } else if (activeDevice) {
+        // Otherwise use active device
+        setDeviceId(activeDevice.id);
+        setDevice(activeDevice);
+        
+        if (activeDevice.unitNumber) {
+          console.log("Step4: Setting unitNumber from active device:", activeDevice.unitNumber);
+          setUnitNumber(activeDevice.unitNumber);
+        } else {
+          console.warn("Step4: Active device missing phone number!");
+          await loadLegacyData();
+        }
+        
+        setPassword(activeDevice.password || '1234');
+        if (activeDevice.relaySettings) {
+          setRelaySettings(activeDevice.relaySettings);
+        }
+      } else {
+        // Fall back to legacy storage
+        console.log("Step4: No device found, loading legacy settings");
+        await loadLegacyData();
       }
     } catch (error) {
-      console.error('Error loading device:', error);
+      console.error("Step4: Error in loadData:", error);
+      await loadLegacyData(); // Always try legacy data on error
+    } finally {
+      setIsDataLoading(false);
     }
-  };
+  }, [params.deviceId, activeDevice, getDeviceById]);
 
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Separate legacy data loading function
   const loadLegacyData = async () => {
+    console.log("Step4: Loading legacy data");
     try {
       const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
       const savedPassword = await AsyncStorage.getItem('password');
       const savedRelaySettings = await AsyncStorage.getItem('relaySettings');
 
-      if (savedUnitNumber) setUnitNumber(savedUnitNumber);
-      if (savedPassword) setPassword(savedPassword);
+      if (savedUnitNumber) {
+        console.log("Step4: Found legacy unitNumber:", savedUnitNumber);
+        setUnitNumber(savedUnitNumber);
+      } else {
+        console.warn("Step4: No unitNumber found in legacy storage");
+      }
+      
+      if (savedPassword) setPassword(savedPassword || '1234');
       if (savedRelaySettings) setRelaySettings(JSON.parse(savedRelaySettings));
     } catch (error) {
-      console.error('Error loading data:', error);
+      console.error('Step4: Error loading legacy data:', error);
     }
   };
 
@@ -116,36 +154,72 @@ export default function Step4Page() {
     }
   };
 
+  // Fix sendSMS function to use the updated SMS utility with better validation
   const sendSMS = async (command: string) => {
-    if (!deviceId || !unitNumber) {
-      Alert.alert('Error', 'Device information missing');
+    // Try to ensure unitNumber is available
+    if (!unitNumber) {
+      // One last attempt to load from storage directly
+      try {
+        const savedUnitNumber = await AsyncStorage.getItem('unitNumber');
+        if (savedUnitNumber) {
+          console.log("Step4: Found unitNumber in last-chance check:", savedUnitNumber);
+          setUnitNumber(savedUnitNumber);
+          
+          // Now we can proceed with the SMS
+          const result = await openSMSApp(savedUnitNumber, command);
+          if (result && deviceId) {
+            await logSMSOperation(deviceId, command, true);
+          }
+          return;
+        }
+      } catch (error) {
+        console.error("Step4: Last-chance unitNumber check failed:", error);
+      }
+      
+      // If we still don't have it, show the error
+      console.error("Step4: Attempted to send SMS but unitNumber is missing");
+      Alert.alert(
+        'Phone Number Missing',
+        'Cannot find the device phone number. Please check your device configuration.',
+        [
+          { text: 'OK', style: 'cancel' }
+        ]
+      );
+      return;
+    }
+
+    if (!deviceId) {
+      Alert.alert('Error', 'Device ID is missing');
+      return;
+    }
+
+    if (!unitNumber) {
+      console.error("Step4: Attempted to send SMS but unitNumber is missing");
+      Alert.alert(
+        'Phone Number Missing',
+        'Device phone number is missing. Please go back to Step 1 and ensure the device phone number is configured properly.',
+        [
+          { text: 'Go to Step 1', onPress: () => router.push('/step1') },
+          { text: 'Cancel', style: 'cancel' }
+        ]
+      );
       return;
     }
 
     setIsLoading(true);
 
     try {
-      const formattedUnitNumber = Platform.OS === 'ios' ? 
-        unitNumber.replace('+', '') : unitNumber;
-
-      const smsUrl = Platform.select({
-        ios: `sms:${formattedUnitNumber}&body=${encodeURIComponent(command)}`,
-        android: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`,
-        default: `sms:${formattedUnitNumber}?body=${encodeURIComponent(command)}`
-      });
-
-      const supported = await Linking.canOpenURL(smsUrl);
-      if (!supported) {
-        throw new Error('SMS is not available on this device');
-      }
-
-      await Linking.openURL(smsUrl);
+      console.log(`Step4: Sending SMS command: ${command} to ${unitNumber}`);
+      const result = await openSMSApp(unitNumber, command);
       
-      // Log the SMS operation with appropriate categorization
+      if (!result) {
+        throw new Error('Failed to open SMS app');
+      }
+      
       await logSMSOperation(deviceId, command, true);
       
     } catch (error) {
-      console.error('Failed to send SMS:', error);
+      console.error('Step4: Failed to send SMS:', error);
       await addDeviceLog(
         deviceId,
         'SMS Error',
@@ -159,29 +233,49 @@ export default function Step4Page() {
     }
   };
 
-  // Relay Access Control Settings
+  // Relay Access Control Settings with disabled state when unitNumber is missing
   const setAccessControl = (type: 'AUT' | 'ALL') => {
-    // Update local state
-    setRelaySettings(prev => ({ ...prev, accessControl: type }));
-    
-    // Send command to device
-    const command = type === 'ALL' ? `${password}ALL#` : `${password}AUT#`;
-    sendSMS(command);
-    
-    // Save to local storage
-    saveToLocalStorage();
+    try {
+      if (!unitNumber) {
+        Alert.alert('Error', 'Device phone number is missing. Please configure it in Step 1 first.');
+        return;
+      }
+
+      // Update local state
+      setRelaySettings(prev => ({ ...prev, accessControl: type }));
+      
+      // Send command to device
+      const command = type === 'ALL' ? `${password}ALL#` : `${password}AUT#`;
+      sendSMS(command);
+      
+      // Save to local storage
+      saveToLocalStorage();
+    } catch (error) {
+      console.error('Error setting access control:', error);
+      Alert.alert('Error', 'Failed to update access control setting');
+    }
   };
 
-  // Latch Time Settings
+  // Latch Time Settings with disabled state when unitNumber is missing
   const setLatchTime = () => {
-    // Ensure latch time is a 3-digit number
-    const latchTime = relaySettings.latchTime.padStart(3, '0');
-    
-    // Send command to device
-    sendSMS(`${password}GOT${latchTime}#`);
-    
-    // Save to local storage
-    saveToLocalStorage();
+    try {
+      if (!unitNumber) {
+        Alert.alert('Error', 'Device phone number is missing. Please configure it in Step 1 first.');
+        return;
+      }
+
+      // Ensure latch time is a 3-digit number
+      const latchTime = relaySettings.latchTime.padStart(3, '0');
+      
+      // Send command to device
+      sendSMS(`${password}GOT${latchTime}#`);
+      
+      // Save to local storage
+      saveToLocalStorage();
+    } catch (error) {
+      console.error('Error setting latch time:', error);
+      Alert.alert('Error', 'Failed to update latch time setting');
+    }
   };
 
   // Handle latch time input
@@ -191,17 +285,56 @@ export default function Step4Page() {
     setRelaySettings(prev => ({ ...prev, latchTime: filtered }));
   };
 
+  // Debugging log for unitNumber changes
+  useEffect(() => {
+    console.log("Step4: Current unitNumber state:", unitNumber);
+  }, [unitNumber]);
+
+  if (isDataLoading) {
+    return (
+      <PageWithHeader title="Relay Settings" showBack backTo="/setup">
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>Loading device settings...</Text>
+        </View>
+      </PageWithHeader>
+    );
+  }
+
   return (
-    <View style={styles.container}>
-      <StandardHeader showBack backTo="/setup" />
-      
+    <PageWithHeader title="Relay Settings" showBack backTo="/setup">
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
+        {/* Debugging info - remove in production */}
+        <Card title="Device Info" elevated>
+          <Text>Device Number: {unitNumber || 'Missing'}</Text>
+          <Text>Device ID: {deviceId || 'Missing'}</Text>
+          <Text>Password: {password ? '****' : 'Missing'}</Text>
+        </Card>
+
         <View style={styles.infoContainer}>
           <Ionicons name={mapIoniconName("information-circle-outline")} size={24} color={colors.primary} style={styles.infoIcon} />
           <Text style={styles.infoText}>
             Configure how your GSM relay operates. These settings control access permissions and relay behavior.
           </Text>
         </View>
+        
+        {/* Display warning if unitNumber is missing */}
+        {!unitNumber && (
+          <View style={styles.warningContainer}>
+            <Ionicons name={mapIoniconName("warning-outline")} size={24} color={colors.warning} style={styles.infoIcon} />
+            <Text style={styles.warningText}>
+              Device phone number is missing. Please configure it in Step 1 before changing device settings.
+            </Text>
+            <Button
+              title="Go to Step 1"
+              variant="secondary"
+              onPress={() => router.push('/step1')}
+              style={styles.warningButton}
+              icon={<Ionicons name={mapIoniconName("arrow-back")} size={16} color={colors.primary} />}
+              fullWidth
+            />
+          </View>
+        )}
         
         <Card title="Access Control" elevated>
           <Text style={styles.sectionDescription}>
@@ -212,9 +345,11 @@ export default function Step4Page() {
             <TouchableOpacity
               style={[
                 styles.optionButton,
-                relaySettings.accessControl === 'AUT' && styles.optionButtonSelected
+                relaySettings.accessControl === 'AUT' && styles.optionButtonSelected,
+                !unitNumber && styles.optionButtonDisabled // Add disabled style
               ]}
               onPress={() => setAccessControl('AUT')}
+              disabled={!unitNumber} // Disable when unitNumber is missing
             >
               <Ionicons 
                 name="people" 
@@ -235,9 +370,11 @@ export default function Step4Page() {
             <TouchableOpacity
               style={[
                 styles.optionButton,
-                relaySettings.accessControl === 'ALL' && styles.optionButtonSelected
+                relaySettings.accessControl === 'ALL' && styles.optionButtonSelected,
+                !unitNumber && styles.optionButtonDisabled // Add disabled style
               ]}
               onPress={() => setAccessControl('ALL')}
+              disabled={!unitNumber} // Disable when unitNumber is missing
             >
               <Ionicons 
                 name="globe" 
@@ -276,13 +413,15 @@ export default function Step4Page() {
                 keyboardType="number-pad"
                 maxLength={3}
                 containerStyle={styles.latchTimeInput}
+                editable={!!unitNumber} // Make editable only when unitNumber exists
               />
               
               <Button
                 title="Set Timing"
                 onPress={setLatchTime}
                 loading={isLoading}
-                disabled={!relaySettings.latchTime}
+                disabled={!relaySettings.latchTime || !unitNumber} // Disable when unitNumber is missing
+                style={!unitNumber ? styles.buttonDisabled : undefined} // Add disabled style
               />
             </View>
           </View>
@@ -300,7 +439,7 @@ export default function Step4Page() {
           fullWidth
         />
       </ScrollView>
-    </View>
+    </PageWithHeader>
   );
 }
 
@@ -391,5 +530,41 @@ const styles = StyleSheet.create({
   },
   completeButton: {
     marginTop: spacing.lg,
+  },
+  // Add new styles for warning and disabled elements
+  warningContainer: {
+    backgroundColor: `${colors.warning}15`,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    alignItems: 'center',
+  },
+  warningText: {
+    fontSize: 14,
+    color: colors.text.secondary,
+    lineHeight: 20,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
+  },
+  warningButton: {
+    marginTop: spacing.xs,
+  },
+  optionButtonDisabled: {
+    opacity: 0.5,
+    backgroundColor: `${colors.surfaceVariant}50`,
+  },
+  buttonDisabled: {
+    opacity: 0.5,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl,
+  },
+  loadingText: {
+    marginTop: spacing.md,
+    color: colors.text.secondary,
+    fontSize: 16,
   },
 });

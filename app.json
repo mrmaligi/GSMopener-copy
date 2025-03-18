@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Connect4v",
-    "slug": "connect4v",
+    "name": "(((APC)))",
+    "slug": "apc",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -48,8 +48,13 @@
         "origin": false
       },
       "eas": {
-        "projectId": "5ef705ef-a48e-475c-80fc-176f30292ee2"
+        "projectId": "8fa38020-8f63-4ff1-8501-86b0577570f5"
       }
-    }
+    },
+    "fonts": [
+      {
+        "asset": "./assets/fonts/neuropolitical rg.ttf"
+      }
+    ]
   }
 }

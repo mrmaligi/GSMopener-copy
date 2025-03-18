@@ -1,322 +1,222 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useRef, useCallback } from 'react';
-import DataStore, { Device, User, LogEntry, GlobalSettings } from '../../utils/DataStore';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import DataStore from '../../utils/DataStore';
+import { safeExecute } from '../../utils/errorUtils';
+import LogManager from '../../utils/LogManager';
+import { Device, GlobalSettings, LogEntry, User } from '../../types';
 
-interface DataStoreContextType {
+// Define context interface
+interface DataStoreContextProps {
   store: {
     devices: Device[];
     users: User[];
+    logs: Record<string, LogEntry[]>;
     globalSettings: GlobalSettings;
   };
   isLoading: boolean;
-  error: Error | null;
   refreshStore: () => Promise<void>;
-  // Device operations
-  getDeviceById: (deviceId: string) => Device | null;
+  getDeviceById: (deviceId: string) => Device | undefined;
   addDevice: (device: Omit<Device, 'id' | 'createdAt' | 'updatedAt'>) => Promise<Device>;
   updateDevice: (deviceId: string, updates: Partial<Device>) => Promise<Device | null>;
   deleteDevice: (deviceId: string) => Promise<boolean>;
-  setActiveDevice: (deviceId: string | null) => Promise<boolean>;
-  // User operations
+  setActiveDevice: (deviceId: string) => Promise<boolean>;
   getDeviceUsers: (deviceId: string) => User[];
   addUser: (user: Omit<User, 'id'>) => Promise<User>;
   updateUser: (userId: string, updates: Partial<User>) => Promise<User | null>;
   deleteUser: (userId: string) => Promise<boolean>;
-  // Authorization operations
   authorizeUserForDevice: (deviceId: string, userId: string) => Promise<boolean>;
   deauthorizeUserForDevice: (deviceId: string, userId: string) => Promise<boolean>;
-  // Log operations
-  addDeviceLog: (
-    deviceId: string, 
-    action: string, 
-    details: string, 
-    success?: boolean,
-    category?: 'relay' | 'settings' | 'user' | 'system'
-  ) => Promise<LogEntry>;
-  logSMSOperation: (
-    deviceId: string,
-    command: string,
-    success?: boolean
-  ) => Promise<LogEntry>;
-  getDeviceLogs: (deviceId: string) => LogEntry[];
+  addDeviceLog: (deviceId: string, action: string, details: string, success?: boolean, category?: 'relay' | 'settings' | 'user' | 'system') => Promise<LogEntry>;
+  getDeviceLogs: (deviceId: string) => Promise<LogEntry[]>;
   clearDeviceLogs: (deviceId: string) => Promise<boolean>;
-  // Global settings
+  logSMSOperation: (deviceId: string, command: string, success?: boolean) => Promise<LogEntry>;
   updateGlobalSettings: (updates: Partial<GlobalSettings>) => Promise<GlobalSettings>;
-  // Backup & restore
-  createBackup: () => string;
-  restoreFromBackup: (backupJson: string) => Promise<boolean>;
 }
 
-const DataStoreContext = createContext<DataStoreContextType | undefined>(undefined);
+// Create the context
+const DataStoreContext = createContext<DataStoreContextProps | undefined>(undefined);
 
-export const DataStoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [dataStore] = useState(DataStore.getInstance());
+// Provider component
+export const DataStoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const dataStore = DataStore.getInstance();
+  const [store, setStore] = useState(dataStore.getStore());
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  const isInitialized = useRef(false);
   const isRefreshing = useRef(false);
-  const [store, setStore] = useState<{
-    devices: Device[];
-    users: User[];
-    globalSettings: GlobalSettings;
-  }>({
-    devices: [],
-    users: [],
-    globalSettings: {
-      adminNumber: '',
-      activeDeviceId: null,
-      completedSteps: []
-    }
-  });
 
-  // Initialize the data store
+  // Initialize the datastore when the component mounts
   useEffect(() => {
-    const initializeStore = async () => {
-      setIsLoading(true);
-      try {
-        console.log("DataStoreContext: Initializing DataStore...");
-        await dataStore.initialize();
-        const storeData = dataStore.getStore();
-        console.log(`DataStoreContext: Data loaded - ${storeData.devices.length} devices, ${storeData.users.length} users`);
-        
-        setStore({
-          devices: storeData.devices,
-          users: storeData.users,
-          globalSettings: storeData.globalSettings
-        });
-        setError(null);
-      } catch (err) {
-        console.error("DataStore initialization error:", err);
-        setError(err instanceof Error ? err : new Error(String(err)));
-      } finally {
-        setIsLoading(false);
-      }
+    // Prevent multiple initializations
+    if (isInitialized.current) return;
+    
+    const initializeDataStore = async () => {
+      await safeExecute(
+        async () => {
+          await dataStore.initialize();
+          setStore(dataStore.getStore());
+          isInitialized.current = true;
+        },
+        {
+          setLoading: setIsLoading,
+          logAction: 'Data Store Initialization',
+          showAlert: false
+        }
+      );
     };
 
-    initializeStore();
+    initializeDataStore();
   }, []);
 
-  // Add a refreshStore method to manually refresh data from DataStore
-  const refreshStore = useCallback(async () => {
-    // Skip if already refreshing
+  // Refresh the store data - using useCallback to prevent recreation on each render
+  const refreshStore = useCallback(async (): Promise<void> => {
+    // Prevent concurrent refreshes
     if (isRefreshing.current) return;
+    
     isRefreshing.current = true;
     
-    try {
-      const storeData = dataStore.getStore();
-      
-      // Use functional form of setState to safely check if data has changed
-      setStore(prevStore => {
-        // Skip update if data hasn't actually changed
-        if (JSON.stringify({
-          devices: prevStore.devices,
-          users: prevStore.users,
-          globalSettings: prevStore.globalSettings
-        }) === JSON.stringify({
-          devices: storeData.devices,
-          users: storeData.users,
-          globalSettings: storeData.globalSettings
-        })) {
-          return prevStore; // No change needed
-        }
+    return safeExecute(
+      async () => {
+        await dataStore.initialize();
         
-        // Return new state only if different
-        return {
-          devices: storeData.devices,
-          users: storeData.users,
-          globalSettings: storeData.globalSettings
-        };
-      });
-    } catch (err) {
-      console.error("Failed to refresh store:", err);
-    } finally {
-      isRefreshing.current = false;
-    }
+        // Only update state if the data actually changed
+        const newStoreData = dataStore.getStore();
+        const currentStoreJSON = JSON.stringify(store);
+        const newStoreJSON = JSON.stringify(newStoreData);
+        
+        if (currentStoreJSON !== newStoreJSON) {
+          setStore(newStoreData);
+        }
+      },
+      {
+        logAction: 'Data Store Refresh',
+        showAlert: false,
+        onSuccess: () => {
+          isRefreshing.current = false;
+        },
+        onError: () => {
+          isRefreshing.current = false;
+        }
+      }
+    );
+  }, [store]);
+
+  // Define context value - memoize operations that don't directly depend on changing state
+  const getDeviceById = useCallback((deviceId: string) => {
+    return store.devices.find(d => d.id === deviceId);
+  }, [store.devices]);
+  
+  const getDeviceUsers = useCallback((deviceId: string) => {
+    return dataStore.getDeviceUsers(deviceId);
   }, []);
 
-  // Create the context value with all DataStore methods
-  const contextValue: DataStoreContextType = {
+  // Define context value
+  const contextValue: DataStoreContextProps = {
     store,
     isLoading,
-    error,
     refreshStore,
-    // Device operations
-    getDeviceById: (deviceId) => dataStore.getDeviceById(deviceId),
+    getDeviceById,
     addDevice: async (device) => {
-      try {
-        // Validate required fields
-        if (!device.name || !device.unitNumber || !device.password) {
-          throw new Error('Missing required device fields');
+      return safeExecute(
+        () => dataStore.addDevice(device),
+        {
+          onSuccess: refreshStore,
+          logAction: 'Add Device',
         }
-        
-        // Ensure authorizedUsers exists
-        const deviceToAdd = {
-          ...device,
-          authorizedUsers: device.authorizedUsers || []
-        };
-        
-        console.log('Adding new device:', {
-          name: deviceToAdd.name,
-          unitNumber: deviceToAdd.unitNumber
-        });
-        
-        const newDevice = await dataStore.addDevice(deviceToAdd);
-        await refreshStore();
-        return newDevice;
-      } catch (error) {
-        console.error('DataStoreContext: Error adding device:', error);
-        throw error;  // Re-throw to allow components to handle it
-      }
+      );
     },
     updateDevice: async (deviceId, updates) => {
-      const updatedDevice = await dataStore.updateDevice(deviceId, updates);
-      await refreshStore();
-      return updatedDevice;
+      return safeExecute(
+        () => dataStore.updateDevice(deviceId, updates),
+        {
+          onSuccess: refreshStore,
+          logAction: 'Update Device',
+        }
+      );
     },
     deleteDevice: async (deviceId) => {
-      try {
-        console.log(`Attempting to delete device: ${deviceId}`);
-        const success = await dataStore.deleteDevice(deviceId);
-        
-        if (success) {
-          console.log(`Device ${deviceId} deleted successfully`);
-          await refreshStore();
-          
-          // Log the deletion
-          await dataStore.addDeviceLog(
-            deviceId, 
-            'Device Management', 
-            'Device deleted', 
-            true, 
-            'system'
-          );
-        } else {
-          console.error(`Failed to delete device ${deviceId}`);
+      return safeExecute(
+        () => dataStore.deleteDevice(deviceId),
+        {
+          onSuccess: refreshStore,
+          logAction: 'Delete Device',
         }
-        
-        return success;
-      } catch (error) {
-        console.error('Error deleting device:', error);
-        return false;
-      }
+      );
     },
     setActiveDevice: async (deviceId) => {
-      const success = await dataStore.setActiveDevice(deviceId);
-      if (success) {
-        await refreshStore();
-      }
-      return success;
+      return safeExecute(
+        () => dataStore.setActiveDevice(deviceId),
+        {
+          onSuccess: refreshStore,
+          logAction: 'Set Active Device',
+        }
+      );
     },
-    // User operations
-    getDeviceUsers: (deviceId) => dataStore.getDeviceUsers(deviceId),
+    getDeviceUsers,
     addUser: async (user) => {
-      const newUser = await dataStore.addUser(user);
-      await refreshStore();
-      return newUser;
+      return safeExecute(
+        () => dataStore.addUser(user),
+        {
+          onSuccess: refreshStore,
+          logAction: 'Add User',
+        }
+      );
     },
     updateUser: async (userId, updates) => {
-      const updatedUser = await dataStore.updateUser(userId, updates);
-      await refreshStore();
-      return updatedUser;
+      return safeExecute(
+        () => dataStore.updateUser(userId, updates),
+        {
+          onSuccess: refreshStore,
+          logAction: 'Update User',
+        }
+      );
     },
     deleteUser: async (userId) => {
-      const success = await dataStore.deleteUser(userId);
-      if (success) {
-        await refreshStore();
-      }
-      return success;
+      return safeExecute(
+        () => dataStore.deleteUser(userId),
+        {
+          onSuccess: refreshStore,
+          logAction: 'Delete User',
+        }
+      );
     },
-    // Authorization operations
     authorizeUserForDevice: async (deviceId, userId) => {
-      const success = await dataStore.authorizeUserForDevice(deviceId, userId);
-      if (success) {
-        await refreshStore();
-      }
-      return success;
+      return safeExecute(
+        () => dataStore.authorizeUserForDevice(deviceId, userId),
+        {
+          onSuccess: refreshStore,
+          logAction: 'Authorize User',
+        }
+      );
     },
     deauthorizeUserForDevice: async (deviceId, userId) => {
-      const success = await dataStore.deauthorizeUserForDevice(deviceId, userId);
-      if (success) {
-        await refreshStore();
-      }
-      return success;
+      return safeExecute(
+        () => dataStore.deauthorizeUserForDevice(deviceId, userId),
+        {
+          onSuccess: refreshStore,
+          logAction: 'Deauthorize User',
+        }
+      );
     },
-    // Log operations
     addDeviceLog: async (deviceId, action, details, success = true, category = 'system') => {
-      const logEntry = await dataStore.addDeviceLog(deviceId, action, details, success, category);
-      return logEntry;
+      return LogManager.addLog(action, details, success, deviceId, category);
     },
-    // Enhanced method for logging SMS commands
-    logSMSOperation: async (deviceId, command, success = true) => {
-      let action = 'Unknown Command';
-      let category: 'relay' | 'settings' | 'user' | 'system' = 'relay';
-      let details = command;
-      
-      // Create a masked command to protect sensitive information like passwords
-      const maskedCommand = command.replace(/\d{4}[A-Z]/, '****$&'.slice(4));
-
-      // Determine command type - with improved human-readable descriptions
-      if (command.includes('CC')) {
-        action = 'Gate Open Command';
-        details = `Sent command to activate relay (open gate): ${maskedCommand}`;
-      } else if (command.includes('DD')) {
-        action = 'Gate Close Command';
-        details = `Sent command to deactivate relay (close gate): ${maskedCommand}`;
-      } else if (command.includes('GOT')) {
-        action = 'Relay Timing Setting';
-        category = 'settings';
-        const time = command.match(/GOT(\d{3})/)?.[1] || 'unknown';
-        details = `Set relay timing to ${time === '000' ? 'toggle mode' : `${time} seconds`}: ${maskedCommand}`;
-      } else if (command.includes('ALL')) {
-        action = 'Access Control Setting';
-        category = 'settings';
-        details = `Set access mode to "Allow All" (any caller with password): ${maskedCommand}`;
-      } else if (command.includes('AUT')) {
-        action = 'Access Control Setting';
-        category = 'settings';
-        details = `Set access mode to "Authorized Only": ${maskedCommand}`;
-      } else if (command.includes('TEL')) {
-        action = 'Admin Registration';
-        category = 'settings';
-        details = `Registered administrator phone number: ${maskedCommand}`;
-      } else if (command.includes('EE')) {
-        action = 'Status Check';
-        category = 'system';
-        details = `Requested device status: ${maskedCommand}`;
-      } else if (command.match(/P\d{4}\d{4}#/)) {
-        action = 'Password Change';
-        category = 'settings';
-        details = `Changed device password: ${maskedCommand}`;
-      } else if (command.match(/A\d{3}#[^#]+#/)) {
-        action = 'User Management';
-        category = 'user';
-        details = `Added authorized user: ${maskedCommand}`;
-      } else if (command.match(/A\d{3}##/)) {
-        action = 'User Management';
-        category = 'user';
-        details = `Removed authorized user: ${maskedCommand}`;
-      }
-
-      return dataStore.addDeviceLog(deviceId, action, details, success, category);
+    getDeviceLogs: async (deviceId) => {
+      return LogManager.getDeviceLogs(deviceId);
     },
-    getDeviceLogs: (deviceId) => dataStore.getDeviceLogs(deviceId),
     clearDeviceLogs: async (deviceId) => {
-      const success = await dataStore.clearDeviceLogs(deviceId);
-      return success;
+      return LogManager.clearDeviceLogs(deviceId);
     },
-    // Global settings
+    logSMSOperation: async (deviceId, command, success = true) => {
+      return LogManager.logSMSOperation(deviceId, command, success);
+    },
     updateGlobalSettings: async (updates) => {
-      const updatedSettings = await dataStore.updateGlobalSettings(updates);
-      await refreshStore();
-      return updatedSettings;
+      return safeExecute(
+        () => dataStore.updateGlobalSettings(updates),
+        {
+          onSuccess: refreshStore,
+          logAction: 'Update Settings',
+        }
+      );
     },
-    // Backup & restore
-    createBackup: () => dataStore.createBackup(),
-    restoreFromBackup: async (backupJson) => {
-      const success = await dataStore.restoreFromBackup(backupJson);
-      if (success) {
-        await refreshStore();
-      }
-      return success;
-    }
   };
 
   return (
@@ -326,14 +226,11 @@ export const DataStoreProvider: React.FC<{ children: ReactNode }> = ({ children 
   );
 };
 
-// Custom hook to use the DataStore context
+// Custom hook for accessing DataStore
 export const useDataStore = () => {
   const context = useContext(DataStoreContext);
-  if (!context) {
+  if (context === undefined) {
     throw new Error('useDataStore must be used within a DataStoreProvider');
   }
   return context;
 };
-
-// Add default export
-export default DataStoreProvider;
